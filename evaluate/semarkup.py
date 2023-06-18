@@ -3,11 +3,25 @@ import conllu
 import collections
 
 from typing import Iterator, Iterable, TextIO, List, Union
-from conllu.models import TokenList
+from conllu.models import TokenList, Token
+
+
+SEMARKUP_FIELDS = [
+    "id",
+    "form",
+    "lemma",
+    "upos",
+    "xpos",
+    "feats",
+    "head",
+    "deprel",
+    "semslot",
+    "semclass"
+]
 
 
 class SemarkupToken:
-    def __init__(self, conllu_token: conllu.models.Token):
+    def __init__(self, conllu_token: Token):
         self.id = conllu_token["id"]
         self.form = conllu_token["form"]
         self.lemma = conllu_token["lemma"]
@@ -45,27 +59,14 @@ class SentenceIterator(collections.abc.Iterator):
 
 
 def parse_semarkup(file: TextIO, incr: bool) -> Union[SentenceIterator, List[SemarkupToken]]:
-    semarkup_fields = [
-        "id",
-        "form",
-        "lemma",
-        "upos",
-        "xpos",
-        "feats",
-        "head",
-        "deprel",
-        "semslot",
-        "semclass"
-    ]
-
     assert not file.closed
 
     if incr:
         # Return SentenceIterator
-        sentences = SentenceIterator(conllu.parse_incr(file, fields=semarkup_fields))
+        sentences = SentenceIterator(conllu.parse_incr(file, fields=SEMARKUP_FIELDS))
     else:
         # Return list
-        sentences = conllu.parse(file.read(), fields=semarkup_fields)
+        sentences = conllu.parse(file.read(), fields=SEMARKUP_FIELDS)
 
     return sentences
 
@@ -73,7 +74,10 @@ def parse_semarkup(file: TextIO, incr: bool) -> Union[SentenceIterator, List[Sem
 def write_semarkup(file_path: str, sentences: List[TokenList]) -> None:
     sentences_serialized = []
     for sentence in sentences:
-        sentences_serialized.append(sentence.serialize())
+        sentence_filtered = TokenList(
+            [Token({field: token[field] for field in SEMARKUP_FIELDS}) for token in sentence]
+        )
+        sentences_serialized.append(sentence_filtered.serialize())
     with open(file_path, 'w') as file:
         file.write(''.join(sentences_serialized))
 

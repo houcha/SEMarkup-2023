@@ -2,6 +2,7 @@ import conllu
 
 import collections
 
+from copy import deepcopy
 from typing import Iterator, Iterable, TextIO, List, Union
 from conllu.models import TokenList, Token
 
@@ -74,9 +75,10 @@ def parse_semarkup(file: TextIO, incr: bool) -> Union[SentenceIterator, List[Sem
 def write_semarkup(file_path: str, sentences: List[TokenList]) -> None:
     sentences_serialized = []
     for sentence in sentences:
-        sentence_filtered = TokenList(
-            [Token({field: token[field] for field in SEMARKUP_FIELDS}) for token in sentence]
-        )
+        sentence_filtered = deepcopy(sentence)
+        for token in sentence_filtered:
+            for extra_tag in set(token.keys()) - set(SEMARKUP_FIELDS):
+                token.pop(extra_tag)
         sentences_serialized.append(sentence_filtered.serialize())
     with open(file_path, 'w') as file:
         file.write(''.join(sentences_serialized))

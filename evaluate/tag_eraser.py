@@ -10,14 +10,14 @@ def main(input_file_path: str, output_file_path: str) -> None:
 
     for sentence in tqdm(sentences):
         for token in sentence:
-            token["lemma"] = "_"
-            token["upos"] = "_"
-            token["xpos"] = "_"
-            token["feats"] = "_"
-            token["head"] = "_"
-            token["deprel"] = "_"
-            token["semslot"] = "_"
-            token["semclass"] = "_"
+            token["lemma"] = ""
+            token["upos"] = ""
+            token["xpos"] = ""
+            token["feats"] = ""
+            token["head"] = ""
+            token["deprel"] = ""
+            token["semslot"] = ""
+            token["semclass"] = ""
 
     write_semarkup(output_file_path, sentences)
 

@@ -18,8 +18,11 @@ class Sentence:
         self._tokens = tokens
 
     def _collect_field(self, field_type: str) -> Optional[List]:
-        filed = [token[field_type] for token in self._tokens if token[field_type] is not None]
-        return filed if len(filed) > 0 else None
+        field = [
+            token[field_type] for token in self._tokens
+            if field_type in token and token[field_type] is not None
+        ]
+        return field if len(field) > 0 else None
 
     @property
     def words(self) -> List[str]:
@@ -29,7 +32,7 @@ class Sentence:
     def lemmas(self) -> Optional[List[str]]:
         return self._collect_field("lemma")
 
-    # No xpos_tags, since they are always empty ('_').
+    # No xpos_tags, since they are always empty.
 
     @property
     def upos_tags(self) -> Optional[List[str]]:

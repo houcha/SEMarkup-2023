@@ -21,12 +21,11 @@
         "shuffle": false
     },
     "vocabulary": {
-        "tokens_to_add": { # Add default OOV tokens to string-based fields.
+        "min_count": {
+            "lemma_rule_labels": 2 # Ignore lemmatization rules encountered 1 time in training dataset.
+        },
+        "tokens_to_add": { # Add default OOV tokens.
             "lemma_rule_labels": ["@@UNKNOWN@@"],
-            "pos_feats_labels": ["@@UNKNOWN@@"],
-            "deprel_labels": ["@@UNKNOWN@@"],
-            "semslot_labels": ["@@UNKNOWN@@"],
-            "semclass_labels": ["@@UNKNOWN@@"],
         }
     },
     "model": {

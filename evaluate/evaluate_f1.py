@@ -34,30 +34,30 @@ if __name__ == "__main__":
         test_sentences = parse_semarkup(test_file, incr=False)
         gold_sentences = parse_semarkup(gold_file, incr=False)
 
-    semslot_pred = []
-    semslot_true = []
-    semclass_pred = []
-    semclass_true = []
+    tagsets_names = ["upos", "feats", "semslot", "semclass"]
+
+    test_tags = {tagset_name: [] for tagset_name in tagsets_names}
+    gold_tags = {tagset_name: [] for tagset_name in tagsets_names}
 
     assert len(test_sentences) == len(gold_sentences)
     for test_sentence, gold_sentence in zip(test_sentences, gold_sentences):
         assert len(test_sentence) == len(gold_sentence)
         for test_token, gold_token in zip(test_sentence, gold_sentence):
-            semslot_pred.append(test_token["semslot"])
-            semslot_true.append(gold_token["semslot"])
-            semclass_pred.append(test_token["semclass"])
-            semclass_true.append(gold_token["semclass"])
+            for tagset_name in tagsets_names:
+                # Apply str() to tags, because some tags (feats) are of unhashable types
+                test_tags[tagset_name].append(str(test_token[tagset_name]))
+                gold_tags[tagset_name].append(str(gold_token[tagset_name]))
 
-    semslot_concat = map_str_to_int(semslot_pred + semslot_true)
-    semslot_pred_int, semslot_true_int = semslot_concat[:len(semslot_pred)], semslot_concat[len(semslot_pred):]
-    assert len(semslot_pred_int) == len(semslot_pred) and len(semslot_true_int) == len(semslot_true)
+    print(f"         macro  micro")
+    for tagset_name in tagsets_names:
+        tags_concat = map_str_to_int(test_tags[tagset_name] + gold_tags[tagset_name])
+        test_tags_int = tags_concat[:len(test_tags[tagset_name])]
+        gold_tags_int = tags_concat[len(test_tags[tagset_name]):]
+        assert len(test_tags_int) == len(test_tags[tagset_name])
+        assert len(gold_tags_int) == len(gold_tags[tagset_name])
 
-    semclass_concat = map_str_to_int(semclass_pred + semclass_true)
-    semclass_pred_int, semclass_true_int = semclass_concat[:len(semclass_pred)], semclass_concat[len(semclass_pred):]
-    assert len(semclass_pred_int) == len(semclass_pred) and len(semclass_true_int) == len(semclass_true)
+        macro_f1 = f1_score(gold_tags_int, test_tags_int, average='macro')
+        micro_f1 = f1_score(gold_tags_int, test_tags_int, average='micro')
 
-    print(f"Semslot micro f1: {f1_score(semslot_true_int, semslot_pred_int, average='micro'):.3f}")
-    print(f"Semslot macro f1: {f1_score(semslot_true_int, semslot_pred_int, average='macro'):.3f}")
-    print(f"Semclass micro f1: {f1_score(semclass_true_int, semclass_pred_int, average='micro'):.3f}")
-    print(f"Semclass macro f1: {f1_score(semclass_true_int, semclass_pred_int, average='macro'):.3f}")
+        print(f"{tagset_name:8} {macro_f1*100:.1f}%  {micro_f1*100:.1f}%")
 

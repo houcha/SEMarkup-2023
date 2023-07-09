@@ -8,7 +8,7 @@
         "token_indexers": {
             "tokens": {
                 "type": "pretrained_transformer_mismatched",
-                "model_name": "cointegrated/rubert-tiny" # Use rubert-tiny.
+                "model_name": "cointegrated/rubert-tiny2"
             }
         },
     },
@@ -32,7 +32,7 @@
         "type": "morpho_syntax_semantic_parser", # Use custom model.
         "embedder": {
             "type": "pretrained_transformer_mismatched",
-            "model_name": "cointegrated/rubert-tiny",
+            "model_name": "cointegrated/rubert-tiny2", # Use rubert-tiny.
             "train_parameters": true
         },
         "lemma_rule_classifier": {
@@ -99,6 +99,6 @@
         "num_epochs": 30,
         "validation_metric": "+Avg", # Track average score of all scores. '+' stands for 'higher - better'.
         "grad_clipping": 5.0, # Clip gradient if too high.
-        "cuda_device": 1, # GPU
+        "cuda_device": 3, # GPU
     }
 }

@@ -152,18 +152,8 @@ class MorphoSyntaxSemanticParser(Model):
         for token in sentence:
             forms.append(token["form"])
 
-        # Restore lemmas.
-        lemmas = []
-        lemma_rule_preds = output["lemma_rule_preds"].tolist()[0]
-        for token, lemma_rule_pred in zip(sentence, lemma_rule_preds):
-            word = token["form"]
-            lemma_rule_str = self.vocab.get_token_from_index(lemma_rule_pred, "lemma_rule_labels")
-            if lemma_rule_str == DEFAULT_OOV_TOKEN:
-                lemma = '_'
-            else:
-                lemma_rule = LemmaRule.from_str(lemma_rule_str)
-                lemma = predict_lemma_from_rule(word, lemma_rule)
-            lemmas.append(lemma)
+        # Lemma classifier handles predictions on its own.
+        lemmas = output["lemma_rule_preds"][0]
 
         # Restore "glued" pos and feats tags.
         pos_tags = []

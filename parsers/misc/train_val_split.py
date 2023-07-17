@@ -14,13 +14,6 @@ sys.path.append('../../evaluate')
 from semarkup import parse_semarkup, write_semarkup
 
 
-LOGS_ENABLED = False
-
-
-def log(message: str):
-    if LOGS_ENABLED:
-        print(message)
-
 def calc_tagsets_tags_sizes(sentences: List[TokenList], tagsets_names: List[str]) -> Dict[str, Dict[str, int]]:
     tagsets_tags_sizes = dict()
     for tagset_name in tagsets_names:
@@ -75,7 +68,6 @@ def find_most_rare_tag(tagsets_tags_sizes, total_tagsets_tags_sizes) -> Tuple[st
             rarest_tag_tagset_name = tagset_name
             rarest_tag_count = rare_tag_count
             rarest_tag_total_count = rare_tag_total_count
-    log(f"rarest tag: {rarest_tag} from {rarest_tag_tagset_name} tagset with count: {rarest_tag_count}, total count: {rarest_tag_total_count}")
     return rarest_tag, rarest_tag_tagset_name
 
 def subtract_sentences_from_tags_sizes(tagsets_tags_sizes: Dict[str, Dict[str, int]], sentences: List[TokenList]) -> Dict[str, set]:
@@ -106,7 +98,6 @@ def subtract_sentences_from_inverted_tagsets(inv_tagsets, sentences_indexes: Set
             sentences_with_tag -= sentences_indexes
             # If there are no sentences left for a tag, remove it.
             if not sentences_with_tag:
-                log(f"pop tag {tag} from inverted tagset since no sentences with this tag left")
                 inv_tagset.pop(tag)
 
 
@@ -123,8 +114,6 @@ def build_train_dataset(sentences: List[TokenList], tagsets_names: List[str], tr
     train_sentences_indexes = set()
     # While desirable set is not collected.
     while desirable_train_tags_sizes:
-        log(f"New iteration. train size: {len(train_sentences_indexes)}, total desirable number of tags left: {sum(len(tags_sizes) for tags_sizes in desirable_train_tags_sizes.values())}")
-
         # Find the rarest tag over all tagsets.
         rarest_tag, rarest_tag_tagset_name = find_most_rare_tag(desirable_train_tags_sizes, tags_sizes)
         assert rarest_tag is not None
@@ -138,14 +127,12 @@ def build_train_dataset(sentences: List[TokenList], tagsets_names: List[str], tr
             # The resulting size of the tag is going to be smaller than the desirable one, but usually it's not a big problem.
             assert rarest_tag not in inv_tagsets[rarest_tag_tagset_name]
             drop_count = desirable_train_tags_sizes[rarest_tag_tagset_name].pop(rarest_tag)
-            log(f"tag {rarest_tag_tagset_name}:{rarest_tag} was unfulfilled with {drop_count} instances")
             # Cleanup tagset if no tags left in it.
             if not desirable_train_tags_sizes[rarest_tag_tagset_name]:
                 desirable_train_tags_sizes.pop(rarest_tag_tagset_name)
             continue
         # Pick random sentence with this tag.
         sentence_with_tag = list(sentences_with_tag)[0]
-        log(f"sentences with tag: {sentences_with_tag}, sentence picked: {sentence_with_tag}")
 
         # Add sentence to training set.
         train_sentences_indexes.add(sentence_with_tag)
@@ -154,7 +141,6 @@ def build_train_dataset(sentences: List[TokenList], tagsets_names: List[str], tr
         subtract_sentences_from_inverted_tagsets(inv_tagsets, {sentence_with_tag})
         # Update desirable tags sizes.
         tagsets_tags_saturated = subtract_sentences_from_tags_sizes(desirable_train_tags_sizes, [sentences[sentence_with_tag]])
-        log(f"tags saturated: {tagsets_tags_saturated}")
 
         sentences_with_saturated_tags = set()
         # Find all sentences containing saturated tags...
@@ -165,8 +151,6 @@ def build_train_dataset(sentences: List[TokenList], tagsets_names: List[str], tr
                 if tag_saturated in inv_tagset:
                     sentences_with_saturated_tag = inv_tagset[tag_saturated]
                     sentences_with_saturated_tags |= sentences_with_saturated_tag
-        log(f"extra sentences with saturated tags: {sentences_with_saturated_tags}")
-
         # ...and delete them, as we don't want to add sentences with saturated tags to training set anymore.
         subtract_sentences_from_inverted_tagsets(inv_tagsets, sentences_with_saturated_tags)
 

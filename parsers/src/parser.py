@@ -18,48 +18,75 @@ from .lemmatize_helper import LemmaRule, predict_lemma_from_rule
 from .vocabulary import VocabularyWithCount
 
 
-@Model.register('morpho_syntax_semantic_parser')
+@Model.register('morpho_syntax_semantic_parser', constructor="from_lazy_objects")
 class MorphoSyntaxSemanticParser(Model):
     """
     Joint Morpho-Syntax-Semantic Parser.
     See https://guide.allennlp.org/your-first-model for guidance.
     """
 
-    # See https://guide.allennlp.org/using-config-files to find more about Lazy.
-    #
-    # TODO: move Lazy to from_lazy_objects (as here https://guide.allennlp.org/using-config-files#4)
-    def __init__(self,
-                 vocab: Vocabulary,
-                 embedder: TokenEmbedder,
-                 lemma_rule_classifier: Lazy[LemmaClassifier],
-                 pos_feats_classifier: Lazy[FeedForwardClassifier],
-                 depencency_classifier: Lazy[DependencyClassifier],
-                 semslot_classifier: Lazy[FeedForwardClassifier],
-                 semclass_classifier: Lazy[FeedForwardClassifier]):
+    def __init__(
+        self,
+        vocab: Vocabulary,
+        embedder: TokenEmbedder,
+        lemma_rule_classifier: LemmaClassifier,
+        pos_feats_classifier: FeedForwardClassifier,
+        dependency_classifier: DependencyClassifier,
+        semslot_classifier: FeedForwardClassifier,
+        semclass_classifier: FeedForwardClassifier
+    ):
         super().__init__(vocab)
 
         self.embedder = embedder
-        embedding_dim = self.embedder.get_output_dim()
+        self.lemma_rule_classifier = lemma_rule_classifier
+        self.pos_feats_classifier = pos_feats_classifier
+        self.dependency_classifier = dependency_classifier
+        self.semslot_classifier = semslot_classifier
+        self.semclass_classifier = semclass_classifier
 
-        self.lemma_rule_classifier = lemma_rule_classifier.construct(
+    @classmethod
+    def from_lazy_objects(
+        cls,
+        vocab: Vocabulary,
+        embedder: TokenEmbedder,
+        lemma_rule_classifier: Lazy[LemmaClassifier],
+        pos_feats_classifier: Lazy[FeedForwardClassifier],
+        dependency_classifier: Lazy[DependencyClassifier],
+        semslot_classifier: Lazy[FeedForwardClassifier],
+        semclass_classifier: Lazy[FeedForwardClassifier]
+    ) -> "MorphoSyntaxSemanticParser":
+        """Classifier are Lazy because they depend on embedder's output dimentions."""
+
+        embedding_dim = embedder.get_output_dim()
+
+        lemma_rule_classifier_ = lemma_rule_classifier.construct(
             in_dim=embedding_dim,
             labels_namespace="lemma_rule_labels",
         )
-        self.pos_feats_classifier = pos_feats_classifier.construct(
+        pos_feats_classifier_ = pos_feats_classifier.construct(
             in_dim=embedding_dim,
             labels_namespace="pos_feats_labels",
         )
-        self.dependency_classifier = depencency_classifier.construct(
+        dependency_classifier_ = dependency_classifier.construct(
             in_dim=embedding_dim,
             labels_namespace="deprel_labels",
         )
-        self.semslot_classifier = semslot_classifier.construct(
+        semslot_classifier_ = semslot_classifier.construct(
             in_dim=embedding_dim,
             labels_namespace="semslot_labels",
         )
-        self.semclass_classifier = semclass_classifier.construct(
+        semclass_classifier_ = semclass_classifier.construct(
             in_dim=embedding_dim,
             labels_namespace="semclass_labels",
+        )
+        return cls(
+            vocab=vocab,
+            embedder=embedder,
+            lemma_rule_classifier=lemma_rule_classifier_,
+            pos_feats_classifier=pos_feats_classifier_,
+            dependency_classifier=dependency_classifier_,
+            semslot_classifier=semslot_classifier_,
+            semclass_classifier=semclass_classifier_
         )
 
     @override(check_signature=False)

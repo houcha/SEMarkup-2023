@@ -15,6 +15,7 @@ from allennlp.modules.token_embedders.token_embedder import TokenEmbedder
 from .feedforward_classifier import FeedForwardClassifier, LemmaClassifier
 from .dependency_classifier import DependencyClassifier
 from .lemmatize_helper import LemmaRule, predict_lemma_from_rule
+from .vocabulary import VocabularyWithCount
 
 
 @Model.register('morpho_syntax_semantic_parser')
@@ -42,23 +43,23 @@ class MorphoSyntaxSemanticParser(Model):
 
         self.lemma_rule_classifier = lemma_rule_classifier.construct(
             in_dim=embedding_dim,
-            n_classes=vocab.get_vocab_size("lemma_rule_labels"),
+            labels_namespace="lemma_rule_labels",
         )
         self.pos_feats_classifier = pos_feats_classifier.construct(
             in_dim=embedding_dim,
-            n_classes=vocab.get_vocab_size("pos_feats_labels"),
+            labels_namespace="pos_feats_labels",
         )
         self.dependency_classifier = depencency_classifier.construct(
             in_dim=embedding_dim,
-            n_rel_classes=vocab.get_vocab_size("deprel_labels"),
+            labels_namespace="deprel_labels",
         )
         self.semslot_classifier = semslot_classifier.construct(
             in_dim=embedding_dim,
-            n_classes=vocab.get_vocab_size("semslot_labels"),
+            labels_namespace="semslot_labels",
         )
         self.semclass_classifier = semclass_classifier.construct(
             in_dim=embedding_dim,
-            n_classes=vocab.get_vocab_size("semclass_labels"),
+            labels_namespace="semclass_labels",
         )
 
     @override(check_signature=False)

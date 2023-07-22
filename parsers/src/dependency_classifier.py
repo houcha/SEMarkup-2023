@@ -32,13 +32,14 @@ class DependencyClassifier(Model):
 
     def __init__(self,
                  vocab: Vocabulary,
+                 labels_namespace: str,
                  in_dim: int, # = embedding dim
                  hid_dim: int,
-                 n_rel_classes: int,
                  activation: str,
                  dropout: float):
         super().__init__(vocab)
 
+        n_rel_classes = vocab.get_vocab_size(labels_namespace)
         mlp = nn.Sequential(
             nn.Dropout(dropout),
             nn.Linear(in_dim, hid_dim),

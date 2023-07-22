@@ -1,5 +1,5 @@
 from overrides import override
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import re
 import string
@@ -23,13 +23,15 @@ class FeedForwardClassifier(Model):
     """
     def __init__(self,
                  vocab: Vocabulary,
+                 labels_namespace: str,
                  in_dim: int,
                  hid_dim: int,
-                 n_classes: int,
                  activation: str,
-                 dropout: float):
+                 dropout: float,
+                 class_weights: Optional[Dict[str, float]] = None):
         super().__init__(vocab)
 
+        n_classes = vocab.get_vocab_size(labels_namespace)
         self.classifier = nn.Sequential(
             nn.Dropout(dropout),
             nn.Linear(in_dim, hid_dim),
@@ -37,15 +39,24 @@ class FeedForwardClassifier(Model):
             nn.Dropout(dropout),
             nn.Linear(hid_dim, n_classes)
         )
-        self.criterion = nn.CrossEntropyLoss()
+
+        if class_weights:
+            weight_vector = torch.zeros(len(class_weights))
+            for label, weight in class_weights.items():
+                label_index = vocab.get_token_index(label, labels_namespace)
+                weight_vector[label_idx] = weight
+            self.criterion = nn.CrossEntropyLoss(weight=weight_vector)
+        else:
+            self.criterion = nn.CrossEntropyLoss()
         self.metric = CategoricalAccuracy()
 
     @override(check_signature=False)
     def forward(self,
                 embeddings: Tensor,
-                labels: Tensor = None,
-                mask: Tensor = None
+                labels: Optional[Tensor] = None,
+                mask: Optional[Tensor] = None
                 ) -> Dict[str, Tensor]:
+
         logits = self.classifier(embeddings)
         preds = logits.argmax(-1)
 
@@ -74,15 +85,15 @@ class LemmaClassifier(FeedForwardClassifier):
 
     def __init__(self,
                  vocab: Vocabulary,
+                 labels_namespace: str,
                  in_dim: int,
                  hid_dim: int,
-                 n_classes: int,
                  activation: str,
                  dropout: float,
                  dictionaries: List[Dict[str, str]] = [],
                  topk: int = None):
 
-        super().__init__(vocab, in_dim, hid_dim, n_classes, activation, dropout)
+        super().__init__(vocab, labels_namespace, in_dim, hid_dim, activation, dropout)
 
         self.dictionary = set()
         for dictionary_info in dictionaries:

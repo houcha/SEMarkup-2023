@@ -8,12 +8,13 @@ import torch
 from torch import nn
 from torch import Tensor
 
-from allennlp.data.vocabulary import Vocabulary, DEFAULT_OOV_TOKEN
+from allennlp.data.vocabulary import DEFAULT_OOV_TOKEN
 from allennlp.models import Model
 from allennlp.nn.activations import Activation
 from allennlp.training.metrics import CategoricalAccuracy
 
 from .lemmatize_helper import LemmaRule, predict_lemma_from_rule, normalize, DEFAULT_LEMMA_RULE
+from .vocabulary import VocabularyWeighted
 
 
 @Model.register('feed_forward_classifier')
@@ -22,13 +23,15 @@ class FeedForwardClassifier(Model):
     A simple classifier composed of two feed-forward layers separated by a nonlinear activation.
     """
     def __init__(self,
-                 vocab: Vocabulary,
-                 labels_namespace: str,
-                 in_dim: int,
-                 hid_dim: int,
-                 activation: str,
-                 dropout: float,
-                 class_weights: Optional[Dict[str, float]] = None):
+        vocab: VocabularyWeighted,
+        labels_namespace: str,
+        in_dim: int,
+        hid_dim: int,
+        activation: str,
+        dropout: float,
+        use_class_weights: bool = False,
+        loss_weight: float = 1.0,
+    ):
         super().__init__(vocab)
 
         n_classes = vocab.get_vocab_size(labels_namespace)
@@ -40,14 +43,16 @@ class FeedForwardClassifier(Model):
             nn.Linear(hid_dim, n_classes)
         )
 
-        if class_weights:
+        if use_class_weights:
+            class_weights = vocab.get_class_weights(labels_namespace)
             weight_vector = torch.zeros(len(class_weights))
-            for label, weight in class_weights.items():
+            for label, weight in sorted(class_weights.items(), key=lambda x: x[1]):
                 label_index = vocab.get_token_index(label, labels_namespace)
-                weight_vector[label_idx] = weight
+                weight_vector[label_index] = weight
             self.criterion = nn.CrossEntropyLoss(weight=weight_vector)
         else:
             self.criterion = nn.CrossEntropyLoss()
+        self.loss_weight = loss_weight
         self.metric = CategoricalAccuracy()
 
     @override(check_signature=False)
@@ -68,7 +73,7 @@ class FeedForwardClassifier(Model):
         return {'logits': logits, 'preds': preds, 'loss': loss}
 
     def loss(self, logits: Tensor, target: Tensor, mask: Tensor) -> Tensor:
-        return self.criterion(logits[mask], target[mask])
+        return self.criterion(logits[mask], target[mask]) * self.loss_weight
 
     @override
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
@@ -84,7 +89,7 @@ class LemmaClassifier(FeedForwardClassifier):
     PUNCTUATION = set(string.punctuation)
 
     def __init__(self,
-                 vocab: Vocabulary,
+                 vocab: VocabularyWeighted,
                  labels_namespace: str,
                  in_dim: int,
                  hid_dim: int,

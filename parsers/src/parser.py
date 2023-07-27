@@ -8,14 +8,14 @@ from torch import Tensor
 from allennlp.nn.util import get_text_field_mask
 from allennlp.common import Lazy
 from allennlp.data import TextFieldTensors
-from allennlp.data.vocabulary import Vocabulary, DEFAULT_OOV_TOKEN
+from allennlp.data.vocabulary import DEFAULT_OOV_TOKEN
 from allennlp.models import Model
 from allennlp.modules.token_embedders.token_embedder import TokenEmbedder
 
 from .feedforward_classifier import FeedForwardClassifier, LemmaClassifier
 from .dependency_classifier import DependencyClassifier
 from .lemmatize_helper import LemmaRule, predict_lemma_from_rule
-from .vocabulary import VocabularyWithCount
+from .vocabulary import VocabularyWeighted
 
 
 @Model.register('morpho_syntax_semantic_parser', constructor="from_lazy_objects")
@@ -27,7 +27,7 @@ class MorphoSyntaxSemanticParser(Model):
 
     def __init__(
         self,
-        vocab: Vocabulary,
+        vocab: VocabularyWeighted,
         embedder: TokenEmbedder,
         lemma_rule_classifier: LemmaClassifier,
         pos_feats_classifier: FeedForwardClassifier,
@@ -47,7 +47,7 @@ class MorphoSyntaxSemanticParser(Model):
     @classmethod
     def from_lazy_objects(
         cls,
-        vocab: Vocabulary,
+        vocab: VocabularyWeighted,
         embedder: TokenEmbedder,
         lemma_rule_classifier: Lazy[LemmaClassifier],
         pos_feats_classifier: Lazy[FeedForwardClassifier],

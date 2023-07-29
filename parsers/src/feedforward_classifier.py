@@ -11,7 +11,7 @@ from torch import Tensor
 from allennlp.data.vocabulary import DEFAULT_OOV_TOKEN
 from allennlp.models import Model
 from allennlp.nn.activations import Activation
-from allennlp.training.metrics import CategoricalAccuracy
+from allennlp.training.metrics import CategoricalAccuracy, FBetaVerboseMeasure
 
 from .lemmatize_helper import LemmaRule, predict_lemma_from_rule, normalize, DEFAULT_LEMMA_RULE
 from .vocabulary import VocabularyWeighted
@@ -30,7 +30,7 @@ class FeedForwardClassifier(Model):
         activation: str,
         dropout: float,
         use_class_weights: bool = False,
-        loss_weight: float = 1.0,
+        head_loss_weight: float = 1.0
     ):
         super().__init__(vocab)
 
@@ -42,7 +42,7 @@ class FeedForwardClassifier(Model):
             nn.Dropout(dropout),
             nn.Linear(hid_dim, n_classes)
         )
-
+        # Loss.
         if use_class_weights:
             class_weights = vocab.get_class_weights(labels_namespace)
             weight_vector = torch.zeros(len(class_weights))
@@ -52,15 +52,18 @@ class FeedForwardClassifier(Model):
             self.criterion = nn.CrossEntropyLoss(weight=weight_vector)
         else:
             self.criterion = nn.CrossEntropyLoss()
-        self.loss_weight = loss_weight
-        self.metric = CategoricalAccuracy()
+        self.head_loss_weight = head_loss_weight
+        # Evaluation metrics.
+        self.accuracy = CategoricalAccuracy()
+        self.fscore = FBetaVerboseMeasure()
 
     @override(check_signature=False)
-    def forward(self,
-                embeddings: Tensor,
-                labels: Optional[Tensor] = None,
-                mask: Optional[Tensor] = None
-                ) -> Dict[str, Tensor]:
+    def forward(
+        self,
+        embeddings: Tensor,
+        labels: Optional[Tensor] = None,
+        mask: Optional[Tensor] = None
+    ) -> Dict[str, Tensor]:
 
         logits = self.classifier(embeddings)
         preds = logits.argmax(-1)
@@ -68,16 +71,23 @@ class FeedForwardClassifier(Model):
         loss = torch.tensor(0.)
         if labels is not None:
             loss = self.loss(logits, labels, mask)
-            self.metric(logits, labels, mask)
+            self.update_metrics(logits, labels, mask)
 
         return {'logits': logits, 'preds': preds, 'loss': loss}
 
     def loss(self, logits: Tensor, target: Tensor, mask: Tensor) -> Tensor:
-        return self.criterion(logits[mask], target[mask]) * self.loss_weight
+        return self.criterion(logits[mask], target[mask]) * self.head_loss_weight
+
+    def update_metrics(self, logits: Tensor, target: Tensor, mask: Tensor) -> None:
+        self.accuracy(logits, target, mask)
+        self.fscore(logits, target, mask)
 
     @override
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
-        return {"Accuracy": self.metric.get_metric(reset)}
+        return {
+            "accuracy": self.accuracy.get_metric(reset),
+            "macro-fscore": self.fscore.get_metric(reset)["macro-fscore"]
+        }
 
 
 @Model.register('lemma_classifier')
@@ -88,15 +98,17 @@ class LemmaClassifier(FeedForwardClassifier):
 
     PUNCTUATION = set(string.punctuation)
 
-    def __init__(self,
-                 vocab: VocabularyWeighted,
-                 labels_namespace: str,
-                 in_dim: int,
-                 hid_dim: int,
-                 activation: str,
-                 dropout: float,
-                 dictionaries: List[Dict[str, str]] = [],
-                 topk: int = None):
+    def __init__(
+        self,
+        vocab: VocabularyWeighted,
+        labels_namespace: str,
+        in_dim: int,
+        hid_dim: int,
+        activation: str,
+        dropout: float,
+        dictionaries: List[Dict[str, str]] = [],
+        topk: int = None
+    ):
 
         super().__init__(vocab, labels_namespace, in_dim, hid_dim, activation, dropout)
 
@@ -118,12 +130,13 @@ class LemmaClassifier(FeedForwardClassifier):
         self.topk = topk
 
     @override
-    def forward(self,
-                embeddings: Tensor,
-                labels: Tensor = None,
-                mask: Tensor = None,
-                metadata: Dict = None
-                ) -> Dict[str, Tensor]:
+    def forward(
+        self,
+        embeddings: Tensor,
+        labels: Tensor = None,
+        mask: Tensor = None,
+        metadata: Dict = None
+    ) -> Dict[str, Tensor]:
 
         output = super().forward(embeddings, labels, mask)
         logits, preds, loss = output['logits'], output['preds'], output['loss']

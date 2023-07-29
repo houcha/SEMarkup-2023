@@ -96,17 +96,18 @@ class ComprenoUDDatasetReader(DatasetReader):
                 sentence.metadata
             )
 
-    def text_to_instance(self,
-                         words: List[str],
-                         lemmas: List[str] = None,
-                         upos_tags: List[str] = None,
-                         feats_tags: List[str] = None,
-                         heads: List[int] = None,
-                         deprels: List[str] = None,
-                         semslots: List[str] = None,
-                         semclasses: List[str] = None,
-                         metadata: Dict = None
-                         ) -> Instance:
+    def text_to_instance(
+        self,
+        words: List[str],
+        lemmas: List[str] = None,
+        upos_tags: List[str] = None,
+        feats_tags: List[str] = None,
+        heads: List[int] = None,
+        deprels: List[str] = None,
+        semslots: List[str] = None,
+        semclasses: List[str] = None,
+        metadata: Dict = None
+    ) -> Instance:
 
         text_field = TextField(list(map(Token, words)), self.token_indexers)
 

@@ -4,7 +4,6 @@ import sys
 import argparse
 from random import shuffle
 
-from typing import List, Dict, Set, Tuple
 from conllu.models import TokenList
 
 sys.path.append('../src')
@@ -14,7 +13,11 @@ sys.path.append('../../evaluate')
 from semarkup import parse_semarkup, write_semarkup
 
 
-def calc_tagsets_tags_sizes(sentences: List[TokenList], tagsets_names: List[str]) -> Dict[str, Dict[str, int]]:
+def calc_tagsets_tags_sizes(
+    sentences: list[TokenList],
+    tagsets_names: list[str]
+) -> dict[str, dict[str, int]]:
+
     tagsets_tags_sizes = dict()
     for tagset_name in tagsets_names:
         tags_sizes = dict()
@@ -27,7 +30,12 @@ def calc_tagsets_tags_sizes(sentences: List[TokenList], tagsets_names: List[str]
         tagsets_tags_sizes[tagset_name] = tags_sizes
     return tagsets_tags_sizes
 
-def calc_desirable_train_tagsets_tags_sizes(tagsets_tags_sizes: Dict[str, Dict[str, int]], train_fraction: int):
+
+def calc_desirable_train_tagsets_tags_sizes(
+    tagsets_tags_sizes: dict[str, dict[str, int]],
+    train_fraction: int
+) -> dict[str, dict[str, int]]:
+
     desirable_train_tagsets_tags_sizes = dict()
     for tagset_name, tags_sizes in tagsets_tags_sizes.items():
         desirable_tags_sizes = dict()
@@ -36,7 +44,11 @@ def calc_desirable_train_tagsets_tags_sizes(tagsets_tags_sizes: Dict[str, Dict[s
         desirable_train_tagsets_tags_sizes[tagset_name] = desirable_tags_sizes
     return desirable_train_tagsets_tags_sizes
 
-def build_inverted_tagsets(sentences: List[TokenList], tagsets_names: List[str]):
+
+def build_inverted_tagsets(
+    entences: list[TokenList],
+    tagsets_names: list[str]
+) -> dict[str, dict[str, set[int]]:
     sentences_tagsets = []
     tagsets = {tagset_name: set() for tagset_name in tagsets_names}
 
@@ -56,7 +68,12 @@ def build_inverted_tagsets(sentences: List[TokenList], tagsets_names: List[str])
                 inv_tagsets[tagset_name][tag].add(sentence_index)
     return inv_tagsets
 
-def find_most_rare_tag(tagsets_tags_sizes, total_tagsets_tags_sizes) -> Tuple[str, str]:
+
+def find_most_rare_tag(
+    tagsets_tags_sizes: dict[str, dict[str, int]],
+    total_tagsets_tags_sizes: dict[str, dict[str, int]]
+) -> tuple[str, str]:
+
     rarest_tag, rarest_tag_tagset_name = None, None
     rarest_tag_count, rerest_tag_total_count = float('inf'), float('inf')
     for tagset_name, tags_sizes in tagsets_tags_sizes.items():
@@ -70,7 +87,12 @@ def find_most_rare_tag(tagsets_tags_sizes, total_tagsets_tags_sizes) -> Tuple[st
             rarest_tag_total_count = rare_tag_total_count
     return rarest_tag, rarest_tag_tagset_name
 
-def subtract_sentences_from_tags_sizes(tagsets_tags_sizes: Dict[str, Dict[str, int]], sentences: List[TokenList]) -> Dict[str, set]:
+
+def subtract_sentences_from_tags_sizes(
+    tagsets_tags_sizes: dict[str, dict[str, int]],
+    sentences: list[TokenList]
+) -> dict[str, set[str]]:
+
     # Search for saturated tags.
     tagsets_tags_saturated = {tagset_name: set() for tagset_name in tagsets_tags_sizes}
     for tagset_name, tags_sizes in tagsets_tags_sizes.items():
@@ -90,7 +112,12 @@ def subtract_sentences_from_tags_sizes(tagsets_tags_sizes: Dict[str, Dict[str, i
                 tagsets_tags_sizes.pop(tagset_name)
     return tagsets_tags_saturated
 
-def subtract_sentences_from_inverted_tagsets(inv_tagsets, sentences_indexes: Set[int]):
+
+def subtract_sentences_from_inverted_tagsets(
+    inv_tagsets: dict[str, dict[str, set[int]]],
+    sentences_indexes: set[int]
+) -> None:
+
     for inv_tagset in inv_tagsets.values():
         inv_tagset_keys = list(inv_tagset.keys()) # Make a copy so that inverted tagset can be updated in-place.
         for tag in inv_tagset_keys:
@@ -101,7 +128,11 @@ def subtract_sentences_from_inverted_tagsets(inv_tagsets, sentences_indexes: Set
                 inv_tagset.pop(tag)
 
 
-def build_train_dataset(sentences: List[TokenList], tagsets_names: List[str], train_fraction: float) -> Set[int]:
+def build_train_dataset(
+    sentences: list[TokenList],
+    tagsets_names: list[str],
+    train_fraction: float
+) -> set[int]:
     """
     Build a set of sentences such that every tag from `tagsets` tagsets has at least one occurrence.
     We use this to make sure training set contains all tags of all tagsets.
@@ -157,7 +188,11 @@ def build_train_dataset(sentences: List[TokenList], tagsets_names: List[str], tr
     return train_sentences_indexes
 
 
-def train_val_split( sentences: List[TokenList], tagsets_names: List[str], train_fraction: float) -> None:
+def train_val_split(
+    sentences: list[TokenList],
+    tagsets_names: list[str],
+    train_fraction: float
+) -> None:
     assert 0.0 < train_fraction < 1.0, "train_fraction must be in (0, 1) range."
 
     train_sentence_indexes = build_train_dataset(sentences, tagsets_names, train_fraction)
@@ -169,7 +204,7 @@ def train_val_split( sentences: List[TokenList], tagsets_names: List[str], train
     return train_sentences, validation_sentences
 
 
-def print_dataset_statistic(sentences: List[TokenList], tagsets_names: List[str]):
+def print_dataset_statistic(sentences: list[TokenList], tagsets_names: list[str]) -> None:
     print(f"Number of sentences: {len(sentences)}")
     for tagset_name in tagsets_names:
         tagset_size = len({token[tagset_name] for sentence in sentences for token in sentence})

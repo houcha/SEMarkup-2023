@@ -30,13 +30,15 @@ class DependencyClassifier(Model):
     It might be not 100% correct, but it does its job.
     """
 
-    def __init__(self,
-                 vocab: Vocabulary,
-                 labels_namespace: str,
-                 in_dim: int, # = embedding dim
-                 hid_dim: int,
-                 activation: str,
-                 dropout: float):
+    def __init__(
+        self,
+        vocab: Vocabulary,
+        labels_namespace: str,
+        in_dim: int, # = embedding dim
+        hid_dim: int,
+        activation: str,
+        dropout: float
+    ):
         super().__init__(vocab)
 
         n_rel_classes = vocab.get_vocab_size(labels_namespace)
@@ -57,12 +59,13 @@ class DependencyClassifier(Model):
         self.criterion = nn.CrossEntropyLoss()
         self.metric = AttachmentScores()
 
-    def forward(self,
-                embeddings: Tensor, # [batch_size, seq_len, embedding_dim]
-                arc_labels: Tensor, # [batch_size, seq_len]
-                rel_labels: Tensor, # [batch_size, seq_len]
-                mask: Tensor        # [batch_size, seq_len]
-                ) -> Dict[str, Tensor]:
+    def forward(
+        self,
+        embeddings: Tensor, # [batch_size, seq_len, embedding_dim]
+        arc_labels: Tensor, # [batch_size, seq_len]
+        rel_labels: Tensor, # [batch_size, seq_len]
+        mask: Tensor        # [batch_size, seq_len]
+    ) -> Dict[str, Tensor]:
 
         # [batch_size, seq_len, hid_dim]
         h_arc_head = self.arc_head_mlp(embeddings)
@@ -98,21 +101,23 @@ class DependencyClassifier(Model):
             'rel_loss': rel_loss
         }
 
-    def decode(self,
-               s_arc: Tensor, # [batch_size, seq_len, seq_len]
-               s_rel: Tensor, # [batch_size, seq_len, seq_len, num_labels]
-               mask: Tensor   # [batch_size, seq_len]
-               ) -> Tuple[Tensor, Tensor]:
+    def decode(
+        self,
+        s_arc: Tensor, # [batch_size, seq_len, seq_len]
+        s_rel: Tensor, # [batch_size, seq_len, seq_len, num_labels]
+        mask: Tensor   # [batch_size, seq_len]
+    ) -> Tuple[Tensor, Tensor]:
 
         if self.training:
             return self.greedy_decode(s_arc, s_rel)
         else:
             return self.mst_decode(s_arc, s_rel, mask)
 
-    def greedy_decode(self,
-                      s_arc: Tensor, # [batch_size, seq_len, seq_len]
-                      s_rel: Tensor, # [batch_size, seq_len, seq_len, num_labels]
-                      ) -> Tuple[Tensor, Tensor]:
+    def greedy_decode(
+        self,
+        s_arc: Tensor, # [batch_size, seq_len, seq_len]
+        s_rel: Tensor, # [batch_size, seq_len, seq_len, num_labels]
+    ) -> Tuple[Tensor, Tensor]:
 
         batch_size, _, _ = s_arc.shape
 
@@ -130,11 +135,13 @@ class DependencyClassifier(Model):
 
         return predicted_arcs, predicted_rels
 
-    def mst_decode(self,
-                   s_arc: Tensor, # [batch_size, seq_len, seq_len]
-                   s_rel: Tensor, # [batch_size, seq_len, seq_len, num_labels]
-                   mask: Tensor   # [batch_size, seq_len]
-                   ) -> Tuple[Tensor, Tensor]:
+    def mst_decode(
+        self,
+        s_arc: Tensor, # [batch_size, seq_len, seq_len]
+        s_rel: Tensor, # [batch_size, seq_len, seq_len, num_labels]
+        mask: Tensor   # [batch_size, seq_len]
+    ) -> Tuple[Tensor, Tensor]:
+
         batch_size, seq_len, _ = s_arc.shape
 
         assert get_device_of(s_arc) == get_device_of(s_rel)
@@ -203,13 +210,14 @@ class DependencyClassifier(Model):
 
         return predicted_arcs, predicted_rels
 
-    def loss(self,
-             s_arc: Tensor,       # [batch_size, seq_len, seq_len]
-             s_rel: Tensor,       # [batch_size, seq_len, seq_len, num_labels]
-             target_arcs: Tensor, # [batch_size, seq_len]
-             target_rels: Tensor, # [batch_size, seq_len]
-             mask: Tensor         # [batch_size, seq_len]
-             ) -> Tuple[Tensor, Tensor]:
+    def loss(
+        self,
+        s_arc: Tensor,       # [batch_size, seq_len, seq_len]
+        s_rel: Tensor,       # [batch_size, seq_len, seq_len, num_labels]
+        target_arcs: Tensor, # [batch_size, seq_len]
+        target_rels: Tensor, # [batch_size, seq_len]
+        mask: Tensor         # [batch_size, seq_len]
+    ) -> Tuple[Tensor, Tensor]:
 
         # [mask.sum(), seq_len]
         s_arc = s_arc[mask]

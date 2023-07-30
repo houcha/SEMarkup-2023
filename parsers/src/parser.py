@@ -19,7 +19,6 @@ from .lemmatize_helper import LemmaRule, predict_lemma_from_rule
 from .vocabulary import VocabularyWeighted
 
 
-# TODO: Use MultiTaskModel from allennlp
 @Model.register('morpho_syntax_semantic_parser', constructor="from_lazy_objects")
 class MorphoSyntaxSemanticParser(Model):
     """
@@ -140,24 +139,32 @@ class MorphoSyntaxSemanticParser(Model):
     @override
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
         # Morphology.
-        lemma_accuracy = self.lemma_rule_classifier.get_metrics(reset)['accuracy']
+        ## lemma
+        lemma_metrics = self.lemma_rule_classifier.get_metrics(reset)
+        lemma_accuracy = lemma_metrics['accuracy']
+        lemma_loss = lemma_metrics['loss']
         ## pos
         pos_feats_metrics = self.pos_feats_classifier.get_metrics(reset)
         pos_feats_accuracy = pos_feats_metrics['accuracy']
         pos_feats_macro_fscore = pos_feats_metrics['macro-fscore']
+        pos_feats_loss = pos_feats_metrics['loss']
         # Syntax.
         syntax_metrics = self.dependency_classifier.get_metrics(reset)
         uas = syntax_metrics['UAS']
+        arc_loss = syntax_metrics["arc-loss"]
         las = syntax_metrics['LAS']
+        deprel_loss = syntax_metrics["rel-loss"]
         # Semantic.
         ## semslot
         semslot_metrics = self.semslot_classifier.get_metrics(reset)
         semslot_accuracy = semslot_metrics['accuracy']
         semslot_macro_fscore = semslot_metrics['macro-fscore']
+        semslot_loss = semslot_metrics['loss']
         ## semclass
         semclass_metrics = self.semclass_classifier.get_metrics(reset)
         semclass_accuracy = semclass_metrics['accuracy']
         semclass_macro_fscore = semclass_metrics['macro-fscore']
+        semclass_loss = semclass_metrics['loss']
         # Average.
         mean_accuracy = np.mean([
             lemma_accuracy,
@@ -170,14 +177,20 @@ class MorphoSyntaxSemanticParser(Model):
 
         return {
             'LemmaAccuracy': lemma_accuracy,
+            'LemmaLoss': lemma_loss,
             'PosFeatsAccuracy': pos_feats_accuracy,
             'PosFeatsMacroF1': pos_feats_macro_fscore,
+            'PosFeatsLoss': pos_feats_loss,
             'UAS': uas,
+            'HeadLoss': arc_loss,
             'LAS': las,
+            'DeprelLoss': deprel_loss,
             'SemSlotAccuracy': semslot_accuracy,
             'SemSlotMacroF1': semslot_macro_fscore,
+            'SemSlotLoss': semslot_loss,
             'SemClassAccuracy': semclass_accuracy,
             'SemClassMacroF1': semclass_macro_fscore,
+            'SemClassLoss': semclass_loss,
             'AverageAccuracy': mean_accuracy,
         }
 

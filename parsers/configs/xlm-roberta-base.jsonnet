@@ -75,6 +75,15 @@
             "hid_dim": 1024,
             "activation": "relu",
             "dropout": 0.1,
+        },
+        "initializer": {
+            "regexes": [
+                ["lemma_rule_classifier.*", "normal"],
+                ["pos_feats_classifier.*", "normal"],
+                ["dependency_classifier.*", "normal"],
+                ["semslot_classifier.*", "normal"],
+                ["semclass_classifier.*", "normal"]
+            ]
         }
     },
     "trainer": {

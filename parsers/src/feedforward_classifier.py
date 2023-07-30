@@ -15,6 +15,7 @@ from allennlp.training.metrics import CategoricalAccuracy, FBetaVerboseMeasure
 
 from .lemmatize_helper import LemmaRule, predict_lemma_from_rule, normalize, DEFAULT_LEMMA_RULE
 from .vocabulary import VocabularyWeighted
+from .cross_entropy import CrossEntropy
 
 
 @Model.register('feed_forward_classifier')
@@ -42,18 +43,12 @@ class FeedForwardClassifier(Model):
             nn.Dropout(dropout),
             nn.Linear(hid_dim, n_classes)
         )
-        # Loss.
+        # Metrics.
+        weight_vector = None
         if use_class_weights:
-            class_weights = vocab.get_class_weights(labels_namespace)
-            weight_vector = torch.zeros(len(class_weights))
-            for label, weight in sorted(class_weights.items(), key=lambda x: x[1]):
-                label_index = vocab.get_token_index(label, labels_namespace)
-                weight_vector[label_index] = weight
-            self.criterion = nn.CrossEntropyLoss(weight=weight_vector)
-        else:
-            self.criterion = nn.CrossEntropyLoss()
+            weight_vector = vocab.get_weight_vector(labels_namespace)
+        self.loss = CrossEntropy(weight=weight_vector)
         self.head_loss_weight = head_loss_weight
-        # Evaluation metrics.
         self.accuracy = CategoricalAccuracy()
         self.fscore = FBetaVerboseMeasure()
 
@@ -70,15 +65,15 @@ class FeedForwardClassifier(Model):
 
         loss = torch.tensor(0.)
         if labels is not None:
-            loss = self.loss(logits, labels, mask)
+            loss = self.update_loss(logits, labels, mask)
             self.update_metrics(logits, labels, mask)
 
         return {'logits': logits, 'preds': preds, 'loss': loss}
 
-    def loss(self, logits: Tensor, target: Tensor, mask: Tensor) -> Tensor:
-        return self.criterion(logits[mask], target[mask]) * self.head_loss_weight
+    def update_loss(self, logits: Tensor, target: Tensor, mask: Tensor) -> torch.Tensor:
+        return self.loss(logits, target, mask) * self.head_loss_weight
 
-    def update_metrics(self, logits: Tensor, target: Tensor, mask: Tensor) -> None:
+    def update_metrics(self, logits: Tensor, target: Tensor, mask: Tensor):
         self.accuracy(logits, target, mask)
         self.fscore(logits, target, mask)
 
@@ -86,7 +81,8 @@ class FeedForwardClassifier(Model):
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
         return {
             "accuracy": self.accuracy.get_metric(reset),
-            "macro-fscore": self.fscore.get_metric(reset)["macro-fscore"]
+            "macro-fscore": self.fscore.get_metric(reset)["macro-fscore"],
+            "loss": self.loss.get_metric(reset)
         }
 
 

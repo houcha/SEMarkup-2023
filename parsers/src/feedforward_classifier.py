@@ -1,8 +1,9 @@
 from overrides import override
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import re
 import string
+import logging
 
 import torch
 from torch import nn
@@ -12,8 +13,12 @@ from allennlp.data.vocabulary import Vocabulary, DEFAULT_OOV_TOKEN
 from allennlp.models import Model
 from allennlp.nn.activations import Activation
 from allennlp.training.metrics import CategoricalAccuracy
+from tqdm import tqdm
 
 from .lemmatize_helper import LemmaRule, predict_lemma_from_rule, normalize, DEFAULT_LEMMA_RULE
+
+
+logger = logging.getLogger(__name__)
 
 
 @Model.register('feed_forward_classifier')
@@ -63,6 +68,17 @@ class FeedForwardClassifier(Model):
         return {"Accuracy": self.metric.get_metric(reset)}
 
 
+def is_punctuation(word: str) -> bool:
+    return word in LemmaClassifier.PUNCTUATION
+
+def contains_digit(word: str) -> bool:
+    return any(char.isdigit() for char in word)
+
+def is_title(word: str) -> bool:
+    return word[0].isupper()
+
+
+# TODO: move to separate file
 @Model.register('lemma_classifier')
 class LemmaClassifier(FeedForwardClassifier):
     """
@@ -87,7 +103,9 @@ class LemmaClassifier(FeedForwardClassifier):
 
         self.paradigm_dictionary = dict()
         if paradigm_dictionary_path:
+            logger.info("Reading paradigm dictionary...")
             self.paradigm_dictionary = self.build_paradigm_dictionary(paradigm_dictionary_path)
+            logger.info(f"Dictionary size: {len(self.paradigm_dictionary)}")
 
         self.dictionary_lemmas = set()
         for lemmas_info in dictionary_lemmas_info:
@@ -104,15 +122,22 @@ class LemmaClassifier(FeedForwardClassifier):
 
     def build_paradigm_dictionary(self, dictionary_path: str) -> dict:
         dictionary = dict()
-
         with open(dictionary_path, 'r') as f:
             while line := f.readline():
-                paradigm_id, lemma = line.strip().split(':')
-                paradigm_id, lemma_normalized = int(paradigm_id), normalize(lemma)
+                # Skip newlines.
+                if not line.strip():
+                    continue
+
+                lemma, _ = line.strip().split('\t')
+                lemma_normalized = normalize(lemma)
 
                 # Use set to avoid duplicates within a paradigm.
                 unique_wordforms = set()
-                while (line := f.readline()) != '\n':
+                unique_wordforms.add(lemma_normalized)
+                while (line := f.readline()):
+                    # Newline indicates the end of the paradigm group.
+                    if not line.strip():
+                        break
                     wordform, _ = line.strip().split('\t')
                     wordform_normalized = normalize(wordform)
                     unique_wordforms.add(wordform_normalized)
@@ -129,70 +154,95 @@ class LemmaClassifier(FeedForwardClassifier):
                 metadata: Dict = None) -> Dict[str, Tensor]:
 
         output = super().forward(embeddings, labels, mask)
-        logits, _, loss = output['logits'], output['preds'], output['loss']
+        logits, _, loss = output['logits'].cpu(), output['preds'], output['loss']
 
         batch_size, sentence_max_length = logits.shape[0], logits.shape[1]
-        # Allocate some space for answers.
-        preds = [[None] * sentence_max_length] * batch_size
         # Find top most confident lemma rules for each token.
-        top_rules = torch.topk(logits, k=self.topk, dim=-1).indices.cpu().numpy()
+        top_rules = torch.argmax(logits, dim=-1).numpy()
+        # Predict lemmas.
+        predictions = batch_size * [sentence_max_length * [None]]
+        for i, sentence in enumerate(metadata):
+            for j, token in enumerate(sentence):
+                wordform = token["form"]
+                top_rule = top_rules[i][j]
+                predictions[i][j] = self.predict_lemma_from_rule_id(wordform, top_rule)
+
+        # If we are at inference, try to improve classifier predictions using
+        # external dictionaries (if given).
+        if not self.training:
+            self.correct_predictions(logits, predictions, metadata)
+
+        return {'preds': predictions, 'loss': loss}
+
+    def correct_predictions(
+        self,
+        logits: Tensor,
+        predictions: List[List[str]],
+        metadata: Dict
+    ):
+        # If no dictionaries given, there's nothing to do.
+        if not self.paradigm_dictionary and not self.dictionary_lemmas:
+            return
 
         for i, sentence in enumerate(metadata):
             for j, token in enumerate(sentence):
                 wordform = token["form"]
 
-                # Set the most probable lemma as a "preliminary" answer.
-                token_top_rules = top_rules[i][j]
-                token_top_rule = token_top_rules[0]
-                lemma_rule_str = self.vocab.get_token_from_index(token_top_rule, "lemma_rule_labels")
-                lemma_rule = DEFAULT_LEMMA_RULE if lemma_rule_str == DEFAULT_OOV_TOKEN else LemmaRule.from_str(lemma_rule_str)
-                lemma = predict_lemma_from_rule(wordform, lemma_rule)
-                lemma_normalized = normalize(lemma)
-                preds[i][j] = lemma_normalized
+                # Lemmatizer usually does well with titles (e.g. 'Вася') and different kind of dates (like '70-е'),
+                # whereas dictionaries don't, so skip any "corrections" in that case.
+                if is_punctuation(wordform) or contains_digit(wordform):
+                    continue
 
-                # If we are at inference, try to improve classifier predictions using external dictionaries (if given).
-                if not self.training:
-                    # First check if word is present in dictionary of paradigms.
-                    # If it is, and it also has no collisions, then we can predict its lemma with 100% confidence.
-                    if self.paradigm_dictionary:
-                        wordform_normalized = normalize(wordform)
-                        if wordform_normalized in self.paradigm_dictionary:
-                            lemma = self.paradigm_dictionary[wordform_normalized]
-                            if lemma != LemmaClassifier.COLLISION_TOKEN:
-                                preds[i][j] = lemma
-                                # FIXME
-                                if labels is not None and lemma != normalize(token['lemma']):
-                                    print(f"Compreno: token {wordform_normalized}, test_lemma={lemma} != {normalize(token['lemma'])}=gold_lemma")
-                                # The answer is found, go to the next token.
-                                continue
+                # First check if word is present in dictionary of paradigms.
+                # If it is, and it also has no collisions, then we can predict its lemma with 100% confidence.
+                if self.paradigm_dictionary:
+                    lemma = self.lookup_lemma_in_paradigm_dictionary(wordform, token["lemma"])
+                    if lemma is not None:
+                        predictions[i][j] = lemma
+                        continue
 
-                    # Try to correct the answer within top-k predictions using external dictionary lemmas (if given).
-                    if self.dictionary_lemmas:
-                        # Lemmatizer usually does well with titles (e.g. 'Вася') and
-                        # different kind of dates (like '70-е'), so we don't correct the predictions in that case.
-                        is_punctuation = lambda word: word in LemmaClassifier.PUNCTUATION
-                        is_title = lambda word: word[0].isupper()
-                        contains_digit = lambda word: any(char.isdigit() for char in word)
-                        if is_punctuation(wordform) or is_title(wordform) or contains_digit(wordform):
-                            continue
+                # Try to correct the answer within top-k predictions using external dictionary lemmas (if given).
+                if self.dictionary_lemmas:
+                    # Lemmatizes handles titles well, skip them as well.
+                    if is_title(wordform):
+                        continue
+                    lemma = self.find_topk_dictionary_lemma(wordform, logits[i][j])
+                    if lemma is not None:
+                        predictions[i][j] = lemma
+                        continue
 
-                        print(f"Failed to find {wordform_normalized} in paradigm")
+                                                                # FIXME!
+    def lookup_lemma_in_paradigm_dictionary(self, wordform: str, gold_lemma: str) -> Optional[str]:
+        wordform_normalized = normalize(wordform)
+        if wordform_normalized in self.paradigm_dictionary:
+            lemma = self.paradigm_dictionary[wordform_normalized]
+            if lemma != LemmaClassifier.COLLISION_TOKEN:
+                if lemma != normalize(gold_lemma):
+                    print(f"Compreno: token {wordform_normalized}, dictionary_lemma={lemma} != {normalize(gold_lemma)}=gold_lemma")
+                return lemma
+            else:
+                pass
+                # print(f"wordform_normalized: {wordform_normalized} has collision")
+        return None
 
-                        # Now find the most probable dictionary lemma for the word.
-                        for lemma_rule_id in token_top_rules:
-                            lemma_rule_str = self.vocab.get_token_from_index(lemma_rule_id, "lemma_rule_labels")
+    def find_topk_dictionary_lemma(self, wordform: str, token_logits: Tensor) -> Optional[str]:
+        topk_lemma_rules = torch.topk(token_logits, k=self.topk, dim=-1).indices.numpy()
 
-                            # Skip out-of-vocabulary words.
-                            if lemma_rule_str == DEFAULT_OOV_TOKEN:
-                                continue
+        # Now find the most probable dictionary lemma for the word.
+        for lemma_rule_id in topk_lemma_rules:
+            lemma_normalized = self.predict_lemma_from_rule_id(wordform, lemma_rule_id)
+            if lemma_normalized in self.dictionary_lemmas:
+                return lemma_normalized
+        return None
 
-                            lemma_rule = LemmaRule.from_str(lemma_rule_str)
-                            lemma = predict_lemma_from_rule(wordform, lemma_rule)
-                            lemma_normalized = normalize(lemma)
-                            if lemma_normalized in self.dictionary_lemmas:
-                                # If dictionary lemma encountered, update the answer and go to the next token.
-                                preds[i][j] = lemma_normalized
-                                break
+    def predict_lemma_from_rule_id(self, wordform: str, lemma_rule_id: int) -> str:
+        lemma_rule_str = self.vocab.get_token_from_index(lemma_rule_id, "lemma_rule_labels")
 
-        return {'preds': preds, 'loss': loss}
+        # Skip out-of-vocabulary words.
+        if lemma_rule_str == DEFAULT_OOV_TOKEN:
+            return DEFAULT_LEMMA_RULE
 
+        lemma_rule = LemmaRule.from_str(lemma_rule_str)
+        lemma = predict_lemma_from_rule(wordform, lemma_rule)
+        lemma_normalized = normalize(lemma)
+        return lemma_normalized

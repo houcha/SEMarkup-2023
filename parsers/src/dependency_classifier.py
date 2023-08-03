@@ -18,6 +18,8 @@ from allennlp.training.metrics import AttachmentScores
 from allennlp.nn.chu_liu_edmonds import decode_mst
 from allennlp.nn.util import replace_masked_values, get_range_vector, get_device_of, move_to_device
 
+from .cross_entropy import CrossEntropy
+
 
 @Model.register('dependency_classifier')
 class DependencyClassifier(Model):
@@ -30,15 +32,18 @@ class DependencyClassifier(Model):
     It might be not 100% correct, but it does its job.
     """
 
-    def __init__(self,
-                 vocab: Vocabulary,
-                 in_dim: int, # = embedding dim
-                 hid_dim: int,
-                 n_rel_classes: int,
-                 activation: str,
-                 dropout: float):
+    def __init__(
+        self,
+        vocab: Vocabulary,
+        labels_namespace: str,
+        in_dim: int,
+        hid_dim: int,
+        activation: str,
+        dropout: float
+    ):
         super().__init__(vocab)
 
+        n_rel_classes = vocab.get_vocab_size(labels_namespace)
         mlp = nn.Sequential(
             nn.Dropout(dropout),
             nn.Linear(in_dim, hid_dim),
@@ -53,15 +58,17 @@ class DependencyClassifier(Model):
         self.arc_attention = BilinearMatrixAttention(hid_dim, hid_dim, use_input_biases=False, label_dim=1)
         self.rel_attention = BilinearMatrixAttention(hid_dim, hid_dim, use_input_biases=True, label_dim=n_rel_classes)
 
-        self.criterion = nn.CrossEntropyLoss()
+        self.arc_loss = CrossEntropy()
+        self.rel_loss = CrossEntropy()
         self.metric = AttachmentScores()
 
-    def forward(self,
-                embeddings: Tensor, # [batch_size, seq_len, embedding_dim]
-                arc_labels: Tensor, # [batch_size, seq_len]
-                rel_labels: Tensor, # [batch_size, seq_len]
-                mask: Tensor        # [batch_size, seq_len]
-                ) -> Dict[str, Tensor]:
+    def forward(
+        self,
+        embeddings: Tensor, # [batch_size, seq_len, embedding_dim]
+        arc_labels: Tensor, # [batch_size, seq_len]
+        rel_labels: Tensor, # [batch_size, seq_len]
+        mask: Tensor        # [batch_size, seq_len]
+    ) -> Dict[str, Tensor]:
 
         # [batch_size, seq_len, hid_dim]
         h_arc_head = self.arc_head_mlp(embeddings)
@@ -77,15 +84,13 @@ class DependencyClassifier(Model):
         s_rel = self.rel_attention(h_rel_head, h_rel_dep).permute(0, 2, 3, 1)
 
         predicted_arcs, predicted_rels = self.decode(s_arc, s_rel, mask)
+        arc_loss, rel_loss = torch.tensor(0.), torch.tensor(0.)
 
         if arc_labels is not None and rel_labels is not None:
             # Now both predicted_arcs and arc_labels have internal format.
             arc_labels = self._conllu_to_internal_arc_format(arc_labels)
-
-            arc_loss, rel_loss = self.loss(s_arc, s_rel, arc_labels, rel_labels, mask)
-            self.metric(predicted_arcs, predicted_rels, arc_labels, rel_labels, mask)
-        else:
-            arc_loss, rel_loss = torch.tensor(0.), torch.tensor(0.)
+            arc_loss, rel_loss = self.update_loss(s_arc, s_rel, arc_labels, rel_labels, mask)
+            self.update_metrics(predicted_arcs, predicted_rels, arc_labels, rel_labels, mask)
 
         # Now both predicted_arcs and arc_labels have conllu format.
         predicted_arcs = self._internal_to_conllu_arc_format(predicted_arcs)
@@ -97,21 +102,23 @@ class DependencyClassifier(Model):
             'rel_loss': rel_loss
         }
 
-    def decode(self,
-               s_arc: Tensor, # [batch_size, seq_len, seq_len]
-               s_rel: Tensor, # [batch_size, seq_len, seq_len, num_labels]
-               mask: Tensor   # [batch_size, seq_len]
-               ) -> Tuple[Tensor, Tensor]:
+    def decode(
+        self,
+        s_arc: Tensor, # [batch_size, seq_len, seq_len]
+        s_rel: Tensor, # [batch_size, seq_len, seq_len, num_labels]
+        mask: Tensor   # [batch_size, seq_len]
+    ) -> Tuple[Tensor, Tensor]:
 
         if self.training:
             return self.greedy_decode(s_arc, s_rel)
         else:
             return self.mst_decode(s_arc, s_rel, mask)
 
-    def greedy_decode(self,
-                      s_arc: Tensor, # [batch_size, seq_len, seq_len]
-                      s_rel: Tensor, # [batch_size, seq_len, seq_len, num_labels]
-                      ) -> Tuple[Tensor, Tensor]:
+    def greedy_decode(
+        self,
+        s_arc: Tensor, # [batch_size, seq_len, seq_len]
+        s_rel: Tensor, # [batch_size, seq_len, seq_len, num_labels]
+    ) -> Tuple[Tensor, Tensor]:
 
         batch_size, _, _ = s_arc.shape
 
@@ -129,11 +136,13 @@ class DependencyClassifier(Model):
 
         return predicted_arcs, predicted_rels
 
-    def mst_decode(self,
-                   s_arc: Tensor, # [batch_size, seq_len, seq_len]
-                   s_rel: Tensor, # [batch_size, seq_len, seq_len, num_labels]
-                   mask: Tensor   # [batch_size, seq_len]
-                   ) -> Tuple[Tensor, Tensor]:
+    def mst_decode(
+        self,
+        s_arc: Tensor, # [batch_size, seq_len, seq_len]
+        s_rel: Tensor, # [batch_size, seq_len, seq_len, num_labels]
+        mask: Tensor   # [batch_size, seq_len]
+    ) -> Tuple[Tensor, Tensor]:
+
         batch_size, seq_len, _ = s_arc.shape
 
         assert get_device_of(s_arc) == get_device_of(s_rel)
@@ -202,14 +211,15 @@ class DependencyClassifier(Model):
 
         return predicted_arcs, predicted_rels
 
-    def loss(self,
-             s_arc: Tensor,       # [batch_size, seq_len, seq_len]
-             s_rel: Tensor,       # [batch_size, seq_len, seq_len, num_labels]
-             target_arcs: Tensor, # [batch_size, seq_len]
-             target_rels: Tensor, # [batch_size, seq_len]
-             mask: Tensor         # [batch_size, seq_len]
-             ) -> Tuple[Tensor, Tensor]:
-
+    def update_loss(
+        self,
+        s_arc: Tensor,       # [batch_size, seq_len, seq_len]
+        s_rel: Tensor,       # [batch_size, seq_len, seq_len, num_labels]
+        target_arcs: Tensor, # [batch_size, seq_len]
+        target_rels: Tensor, # [batch_size, seq_len]
+        mask: Tensor         # [batch_size, seq_len]
+    ) -> Tuple[float, float]:
+        # Manually apply mask because it is non-trivial.
         # [mask.sum(), seq_len]
         s_arc = s_arc[mask]
         # [mask.sum()]
@@ -223,14 +233,30 @@ class DependencyClassifier(Model):
         # [mask.sum()]
         target_rels = target_rels[mask]
 
-        arc_loss = self.criterion(s_arc, target_arcs)
-        rel_loss = self.criterion(s_rel, target_rels)
+        arc_loss = self.arc_loss(s_arc, target_arcs)
+        rel_loss = self.rel_loss(s_rel, target_rels)
 
         return arc_loss, rel_loss
 
+    def update_metrics(
+        self,
+        predicted_arcs: Tensor, # [batch_size, seq_len]
+        predicted_rels: Tensor, # [batch_size, seq_len]
+        target_arcs: Tensor,    # [batch_size, seq_len]
+        target_rels: Tensor,    # [batch_size, seq_len]
+        mask: Tensor            # [batch_size, seq_len]
+    ):
+        self.metric(predicted_arcs, predicted_rels, target_arcs, target_rels, mask)
+
     @override
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
-        return self.metric.get_metric(reset)
+        attachment_scores = self.metric.get_metric(reset)
+        return {
+            "UAS": attachment_scores['UAS'],
+            "LAS": attachment_scores['LAS'],
+            "arc-loss": self.arc_loss.get_metric(reset),
+            "rel-loss": self.rel_loss.get_metric(reset)
+        }
 
     ### Private methods ###
 

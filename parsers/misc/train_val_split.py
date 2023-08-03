@@ -4,7 +4,6 @@ import sys
 import argparse
 from random import shuffle
 
-from typing import List, Set
 from conllu.models import TokenList
 
 sys.path.append('../src')
@@ -14,12 +13,42 @@ sys.path.append('../../evaluate')
 from semarkup import parse_semarkup, write_semarkup
 
 
-def build_cover_sentences(sentences: List[TokenList], tagsets_names: List[str]) -> Set[int]:
-    """
-    Build a set of sentences such that every tag from `tagsets` tagsets has at least one occurrence.
-    We use this to make sure training set contains all the tags of all tagsets.
-    """
+def calc_tagsets_tags_sizes(
+    sentences: list[TokenList],
+    tagsets_names: list[str]
+) -> dict[str, dict[str, int]]:
 
+    tagsets_tags_sizes = dict()
+    for tagset_name in tagsets_names:
+        tags_sizes = dict()
+        for sentence in sentences:
+            for token in sentence:
+                tag = token[tagset_name]
+                if tag not in tags_sizes:
+                    tags_sizes[tag] = 0
+                tags_sizes[tag] += 1
+        tagsets_tags_sizes[tagset_name] = tags_sizes
+    return tagsets_tags_sizes
+
+
+def calc_desirable_train_tagsets_tags_sizes(
+    tagsets_tags_sizes: dict[str, dict[str, int]],
+    train_fraction: int
+) -> dict[str, dict[str, int]]:
+
+    desirable_train_tagsets_tags_sizes = dict()
+    for tagset_name, tags_sizes in tagsets_tags_sizes.items():
+        desirable_tags_sizes = dict()
+        for tag, tag_size in tags_sizes.items():
+            desirable_tags_sizes[tag] = int(train_fraction * tag_size) if tag_size > 1 else 1
+        desirable_train_tagsets_tags_sizes[tagset_name] = desirable_tags_sizes
+    return desirable_train_tagsets_tags_sizes
+
+
+def build_inverted_tagsets(
+    entences: list[TokenList],
+    tagsets_names: list[str]
+) -> dict[str, dict[str, set[int]]:
     sentences_tagsets = []
     tagsets = {tagset_name: set() for tagset_name in tagsets_names}
 
@@ -37,80 +66,145 @@ def build_cover_sentences(sentences: List[TokenList], tagsets_names: List[str]) 
         for tagset_name in tagsets_names:
             for tag in sentence_tagsets[tagset_name]:
                 inv_tagsets[tagset_name][tag].add(sentence_index)
+    return inv_tagsets
 
-    cover_sentences_indexes = set()
 
-    # While there is non-empty inverted tagset, i.e. we have "uncovered" tags, do the following:
-    while sum(len(inv_tagset) for inv_tagset in inv_tagsets.values()) > 0:
+def find_most_rare_tag(
+    tagsets_tags_sizes: dict[str, dict[str, int]],
+    total_tagsets_tags_sizes: dict[str, dict[str, int]]
+) -> tuple[str, str]:
+
+    rarest_tag, rarest_tag_tagset_name = None, None
+    rarest_tag_count, rerest_tag_total_count = float('inf'), float('inf')
+    for tagset_name, tags_sizes in tagsets_tags_sizes.items():
+        tags_sizes, total_tags_sizes = tagsets_tags_sizes[tagset_name], total_tagsets_tags_sizes[tagset_name]
+        tags_priorities = {tag: (tags_sizes[tag], total_tags_sizes[tag]) for tag in tags_sizes}
+        rare_tag, (rare_tag_count, rare_tag_total_count) = min(tags_priorities.items(), key=lambda x: x[1])
+        if rare_tag_count < rarest_tag_count or (rare_tag_count == rarest_tag_count and rare_tag_total_count < rarest_tag_total_count):
+            rarest_tag = rare_tag
+            rarest_tag_tagset_name = tagset_name
+            rarest_tag_count = rare_tag_count
+            rarest_tag_total_count = rare_tag_total_count
+    return rarest_tag, rarest_tag_tagset_name
+
+
+def subtract_sentences_from_tags_sizes(
+    tagsets_tags_sizes: dict[str, dict[str, int]],
+    sentences: list[TokenList]
+) -> dict[str, set[str]]:
+
+    # Search for saturated tags.
+    tagsets_tags_saturated = {tagset_name: set() for tagset_name in tagsets_tags_sizes}
+    for tagset_name, tags_sizes in tagsets_tags_sizes.items():
+        tags_saturated = tagsets_tags_saturated[tagset_name]
+        for sentence in sentences:
+            for token in sentence:
+                tag = token[tagset_name]
+                tags_sizes[tag] -= 1
+                if tags_sizes[tag] == 0:
+                    tags_saturated.add(tag)
+    # Remove saturated tags from statistic.
+    for tagset_name, tags_saturated in tagsets_tags_saturated.items():
+        tagset_tags_sizes = tagsets_tags_sizes[tagset_name]
+        for tag_saturated in tags_saturated:
+            tagset_tags_sizes.pop(tag_saturated)
+            if not tagset_tags_sizes:
+                tagsets_tags_sizes.pop(tagset_name)
+    return tagsets_tags_saturated
+
+
+def subtract_sentences_from_inverted_tagsets(
+    inv_tagsets: dict[str, dict[str, set[int]]],
+    sentences_indexes: set[int]
+) -> None:
+
+    for inv_tagset in inv_tagsets.values():
+        inv_tagset_keys = list(inv_tagset.keys()) # Make a copy so that inverted tagset can be updated in-place.
+        for tag in inv_tagset_keys:
+            sentences_with_tag = inv_tagset[tag]
+            sentences_with_tag -= sentences_indexes
+            # If there are no sentences left for a tag, remove it.
+            if not sentences_with_tag:
+                inv_tagset.pop(tag)
+
+
+def build_train_dataset(
+    sentences: list[TokenList],
+    tagsets_names: list[str],
+    train_fraction: float
+) -> set[int]:
+    """
+    Build a set of sentences such that every tag from `tagsets` tagsets has at least one occurrence.
+    We use this to make sure training set contains all tags of all tagsets.
+    """
+
+    inv_tagsets = build_inverted_tagsets(sentences, tagsets_names)
+    tags_sizes = calc_tagsets_tags_sizes(sentences, tagsets_names)
+    desirable_train_tags_sizes = calc_desirable_train_tagsets_tags_sizes(tags_sizes, train_fraction)
+
+    train_sentences_indexes = set()
+    # While desirable set is not collected.
+    while desirable_train_tags_sizes:
         # Find the rarest tag over all tagsets.
-        rarest_tag, rarest_tag_frequency, rarest_tag_tagset_name = None, float('inf'), None
-        for tagset_name, inv_tagset in inv_tagsets.items():
-            if len(inv_tagset) == 0:
-                continue
-            rare_tag, rare_tag_sentences = min(inv_tagset.items(), key=lambda item: len(item[1]))
-            # Number of sentences with this tag.
-            rare_tag_frequency = len(rare_tag_sentences)
-            if rare_tag_frequency < rarest_tag_frequency:
-                rarest_tag = rare_tag
-                rarest_tag_frequency = rare_tag_frequency
-                rarest_tag_tagset_name = tagset_name
+        rarest_tag, rarest_tag_tagset_name = find_most_rare_tag(desirable_train_tags_sizes, tags_sizes)
         assert rarest_tag is not None
 
-        # Remove tag from tagset.
-        sentences_with_tag = inv_tagsets[rarest_tag_tagset_name].pop(rarest_tag)
-        # Pick any sentence with this tag.
+        try:
+            # Since tags are gathered greedily, the sentences with a rarest tag might have been excluded from the index
+            # on the previous steps in order not to gather saturated tags.
+            sentences_with_tag = inv_tagsets[rarest_tag_tagset_name][rarest_tag]
+        except:
+            # If that is the case, i.e. if current rarest tag was among excluded sentences, then just ignore it.
+            # The resulting size of the tag is going to be smaller than the desirable one, but usually it's not a big problem.
+            assert rarest_tag not in inv_tagsets[rarest_tag_tagset_name]
+            drop_count = desirable_train_tags_sizes[rarest_tag_tagset_name].pop(rarest_tag)
+            # Cleanup tagset if no tags left in it.
+            if not desirable_train_tags_sizes[rarest_tag_tagset_name]:
+                desirable_train_tags_sizes.pop(rarest_tag_tagset_name)
+            continue
+        # Pick random sentence with this tag.
         sentence_with_tag = list(sentences_with_tag)[0]
-        # Add sentence to training set
-        cover_sentences_indexes.add(sentence_with_tag)
-        # ...and also remove all tags present in this sentence from all inverted indexes.
-        for tagset_name, inv_tagset in inv_tagsets.items():
-            for tag in list(inv_tagset.keys()):
-                sentences = inv_tagset[tag]
-                if sentence_with_tag in sentences:
-                    inv_tagset.pop(tag)
 
-    return cover_sentences_indexes
+        # Add sentence to training set.
+        train_sentences_indexes.add(sentence_with_tag)
+
+        # Delete sentence from inverted tagsets.
+        subtract_sentences_from_inverted_tagsets(inv_tagsets, {sentence_with_tag})
+        # Update desirable tags sizes.
+        tagsets_tags_saturated = subtract_sentences_from_tags_sizes(desirable_train_tags_sizes, [sentences[sentence_with_tag]])
+
+        sentences_with_saturated_tags = set()
+        # Find all sentences containing saturated tags...
+        for tagset_name, tags_saturated in tagsets_tags_saturated.items():
+            for tag_saturated in tags_saturated:
+                inv_tagset = inv_tagsets[tagset_name]
+                # Tag might have been deleted at the previous subtract_sentences_from_inverted_tagsets call.
+                if tag_saturated in inv_tagset:
+                    sentences_with_saturated_tag = inv_tagset[tag_saturated]
+                    sentences_with_saturated_tags |= sentences_with_saturated_tag
+        # ...and delete them, as we don't want to add sentences with saturated tags to training set anymore.
+        subtract_sentences_from_inverted_tagsets(inv_tagsets, sentences_with_saturated_tags)
+
+    return train_sentences_indexes
 
 
-def train_val_split( sentences: List[TokenList], train_fraction: float, tagsets_names: List[str]) -> None:
+def train_val_split(
+    sentences: list[TokenList],
+    tagsets_names: list[str],
+    train_fraction: float
+) -> None:
     assert 0.0 < train_fraction < 1.0, "train_fraction must be in (0, 1) range."
-    train_size = int(train_fraction * len(sentences))
 
-    sentences_count = len(sentences)
-    train_fraction = 0.8
-    train_size = int(train_fraction * sentences_count)
-    val_size = sentences_count - train_size
+    train_sentence_indexes = build_train_dataset(sentences, tagsets_names, train_fraction)
+    validation_sentence_indexes = set(range(len(sentences))) - train_sentence_indexes
 
-    min_train_sentences_indexes = build_cover_sentences(sentences, tagsets_names)
-    assert len(min_train_sentences_indexes) <= train_size
-    train_sentences = [sentences[i] for i in min_train_sentences_indexes]
-    # Remove sentences that have been added to the initial train set.
-    sentences = [sentence for i, sentence in enumerate(sentences) if i not in min_train_sentences_indexes]
-    train_size_updated = train_size - len(train_sentences)
+    train_sentences = [sentences[i] for i in train_sentence_indexes]
+    validation_sentences = [sentences[i] for i in validation_sentence_indexes]
 
-    min_val_sentences_indexes = build_cover_sentences(sentences, tagsets_names)
-    assert len(min_val_sentences_indexes) <= val_size
-    val_sentences = [sentences[i] for i in min_val_sentences_indexes]
-    # Remove sentences that have been added to the initial validation set.
-    sentences = [sentence for i, sentence in enumerate(sentences) if i not in min_val_sentences_indexes]
-
-    shuffle(sentences)
-
-    train_sentences += sentences[:train_size_updated]
-    val_sentences += sentences[train_size_updated:]
-
-    assert len(train_sentences) == train_size
-    assert len(train_sentences) + len(val_sentences) == sentences_count
-    assert abs((len(train_sentences) / sentences_count) - train_fraction) <= 1e-3
-    # Make sure train and validation sets have no common sentences.
-    train_sentences_ids = set(int(sentence.metadata['sent_id']) for sentence in train_sentences)
-    val_sentences_ids = set(int(sentence.metadata['sent_id']) for sentence in val_sentences)
-    assert not (train_sentences_ids & val_sentences_ids)
-
-    return train_sentences, val_sentences
+    return train_sentences, validation_sentences
 
 
-def print_dataset_statistic(sentences: List[TokenList], tagsets_names: List[str]):
+def print_dataset_statistic(sentences: list[TokenList], tagsets_names: list[str]) -> None:
     print(f"Number of sentences: {len(sentences)}")
     for tagset_name in tagsets_names:
         tagset_size = len({token[tagset_name] for sentence in sentences for token in sentence})
@@ -133,7 +227,7 @@ if __name__ == "__main__":
         help='A train file to be produced.'
     )
     parser.add_argument(
-        'val_file',
+        'validation_file',
         type=str,
         help='A validation file to be produced.'
     )
@@ -147,22 +241,22 @@ if __name__ == "__main__":
     print("Loading sentences...")
     with open(args.dataset, 'r') as file:
         sentences = parse_semarkup(file, incr=False)
+
     # Modify tags.
     for sentence in sentences:
         for token in sentence:
-            token["lemma_rule"] = predict_lemma_rule(token["form"], token["lemma"])
             token["upos&feats"] = token["upos"] + "&" + str(token["feats"])
 
-    tagsets_names = ["lemma_rule", "upos&feats", "semslot", "semclass"]
+    tagsets_names = ["semclass", "semslot", "upos&feats"]
 
     print("Splitting...")
-    train_sentences, val_sentences = train_val_split(sentences, args.train_fraction, tagsets_names)
+    train_sentences, validation_sentences = train_val_split(sentences, tagsets_names, args.train_fraction)
 
     print()
     print("==============================")
     print("All sentences statistic")
     print("------------------------------")
-    print_dataset_statistic(train_sentences + val_sentences, tagsets_names)
+    print_dataset_statistic(train_sentences + validation_sentences, tagsets_names)
     print("==============================")
     print()
     print("==============================")
@@ -174,10 +268,10 @@ if __name__ == "__main__":
     print("==============================")
     print("Validation sentences statistic")
     print("------------------------------")
-    print_dataset_statistic(val_sentences, tagsets_names)
+    print_dataset_statistic(validation_sentences, tagsets_names)
     print("==============================")
     print()
 
     write_semarkup(args.train_file, train_sentences)
-    write_semarkup(args.val_file, val_sentences)
+    write_semarkup(args.validation_file, validation_sentences)
 

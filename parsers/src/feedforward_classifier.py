@@ -9,13 +9,14 @@ import torch
 from torch import nn
 from torch import Tensor
 
-from allennlp.data.vocabulary import Vocabulary, DEFAULT_OOV_TOKEN
+from allennlp.data.vocabulary import DEFAULT_OOV_TOKEN
 from allennlp.models import Model
 from allennlp.nn.activations import Activation
-from allennlp.training.metrics import CategoricalAccuracy
-from tqdm import tqdm
+from allennlp.training.metrics import CategoricalAccuracy, FBetaVerboseMeasure
 
 from .lemmatize_helper import LemmaRule, predict_lemma_from_rule, normalize, DEFAULT_LEMMA_RULE
+from .vocabulary import VocabularyWeighted
+from .cross_entropy import CrossEntropy
 
 
 @Model.register('feed_forward_classifier')
@@ -24,14 +25,18 @@ class FeedForwardClassifier(Model):
     A simple classifier composed of two feed-forward layers separated by a nonlinear activation.
     """
     def __init__(self,
-                 vocab: Vocabulary,
-                 in_dim: int,
-                 hid_dim: int,
-                 n_classes: int,
-                 activation: str,
-                 dropout: float):
+        vocab: VocabularyWeighted,
+        labels_namespace: str,
+        in_dim: int,
+        hid_dim: int,
+        activation: str,
+        dropout: float,
+        use_class_weights: bool = False,
+        head_loss_weight: float = 1.0
+    ):
         super().__init__(vocab)
 
+        n_classes = vocab.get_vocab_size(labels_namespace)
         self.classifier = nn.Sequential(
             nn.Dropout(dropout),
             nn.Linear(in_dim, hid_dim),
@@ -39,30 +44,47 @@ class FeedForwardClassifier(Model):
             nn.Dropout(dropout),
             nn.Linear(hid_dim, n_classes)
         )
-        self.criterion = nn.CrossEntropyLoss()
-        self.metric = CategoricalAccuracy()
+        # Metrics.
+        weight_vector = None
+        if use_class_weights:
+            weight_vector = vocab.get_weight_vector(labels_namespace)
+        self.loss = CrossEntropy(weight=weight_vector)
+        self.head_loss_weight = head_loss_weight
+        self.accuracy = CategoricalAccuracy()
+        self.fscore = FBetaVerboseMeasure()
 
     @override(check_signature=False)
-    def forward(self,
-                embeddings: Tensor,
-                labels: Tensor = None,
-                mask: Tensor = None) -> Dict[str, Tensor]:
+    def forward(
+        self,
+        embeddings: Tensor,
+        labels: Optional[Tensor] = None,
+        mask: Optional[Tensor] = None
+    ) -> Dict[str, Tensor]:
+
         logits = self.classifier(embeddings)
         preds = logits.argmax(-1)
 
         loss = torch.tensor(0.)
         if labels is not None:
-            loss = self.loss(logits, labels, mask)
-            self.metric(logits, labels, mask)
+            loss = self.update_loss(logits, labels, mask)
+            self.update_metrics(logits, labels, mask)
 
         return {'logits': logits, 'preds': preds, 'loss': loss}
 
-    def loss(self, logits: Tensor, target: Tensor, mask: Tensor) -> Tensor:
-        return self.criterion(logits[mask], target[mask])
+    def update_loss(self, logits: Tensor, target: Tensor, mask: Tensor) -> torch.Tensor:
+        return self.loss(logits, target, mask) * self.head_loss_weight
+
+    def update_metrics(self, logits: Tensor, target: Tensor, mask: Tensor):
+        self.accuracy(logits, target, mask)
+        self.fscore(logits, target, mask)
 
     @override
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
-        return {"Accuracy": self.metric.get_metric(reset)}
+        return {
+            "accuracy": self.accuracy.get_metric(reset),
+            "macro-fscore": self.fscore.get_metric(reset)["macro-fscore"],
+            "loss": self.loss.get_metric(reset)
+        }
 
 
 # TODO: move to separate file
@@ -77,17 +99,18 @@ class LemmaClassifier(FeedForwardClassifier):
 
     def __init__(
         self,
-        vocab: Vocabulary,
+        vocab: VocabularyWeighted,
+        labels_namespace: str,
         in_dim: int,
         hid_dim: int,
-        n_classes: int,
         activation: str,
         dropout: float,
         paradigm_dictionary_path: str = None,
         dictionary_lemmas_info: List[Dict[str, str]] = [],
         topk: int = 1
     ):
-        super().__init__(vocab, in_dim, hid_dim, n_classes, activation, dropout)
+
+        super().__init__(vocab, labels_namespace, in_dim, hid_dim, activation, dropout)
 
         # Paradigm dictionary.
         self.paradigm_dictionary = dict()

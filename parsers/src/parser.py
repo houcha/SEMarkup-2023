@@ -5,73 +5,107 @@ from typing import Dict
 import numpy as np
 from torch import Tensor
 
-from allennlp.nn.util import get_text_field_mask
 from allennlp.common import Lazy
 from allennlp.data import TextFieldTensors
-from allennlp.data.vocabulary import Vocabulary, DEFAULT_OOV_TOKEN
+from allennlp.data.vocabulary import DEFAULT_OOV_TOKEN
 from allennlp.models import Model
 from allennlp.modules.token_embedders.token_embedder import TokenEmbedder
+from allennlp.nn.util import get_text_field_mask
+from allennlp.nn.initializers import InitializerApplicator
 
 from .feedforward_classifier import FeedForwardClassifier, LemmaClassifier
 from .dependency_classifier import DependencyClassifier
 from .lemmatize_helper import LemmaRule, predict_lemma_from_rule
+from .vocabulary import VocabularyWeighted
 
 
-@Model.register('morpho_syntax_semantic_parser')
+@Model.register('morpho_syntax_semantic_parser', constructor="from_lazy_objects")
 class MorphoSyntaxSemanticParser(Model):
     """
     Joint Morpho-Syntax-Semantic Parser.
     See https://guide.allennlp.org/your-first-model for guidance.
     """
 
-    # See https://guide.allennlp.org/using-config-files to find more about Lazy.
-    #
-    # TODO: move Lazy to from_lazy_objects (as here https://guide.allennlp.org/using-config-files#4)
-    def __init__(self,
-                 vocab: Vocabulary,
-                 embedder: TokenEmbedder,
-                 lemma_rule_classifier: Lazy[LemmaClassifier],
-                 pos_feats_classifier: Lazy[FeedForwardClassifier],
-                 depencency_classifier: Lazy[DependencyClassifier],
-                 semslot_classifier: Lazy[FeedForwardClassifier],
-                 semclass_classifier: Lazy[FeedForwardClassifier]):
+    def __init__(
+        self,
+        vocab: VocabularyWeighted,
+        embedder: TokenEmbedder,
+        lemma_rule_classifier: LemmaClassifier,
+        pos_feats_classifier: FeedForwardClassifier,
+        dependency_classifier: DependencyClassifier,
+        semslot_classifier: FeedForwardClassifier,
+        semclass_classifier: FeedForwardClassifier,
+        initializer: InitializerApplicator
+    ):
         super().__init__(vocab)
 
         self.embedder = embedder
-        embedding_dim = self.embedder.get_output_dim()
+        self.lemma_rule_classifier = lemma_rule_classifier
+        self.pos_feats_classifier = pos_feats_classifier
+        self.dependency_classifier = dependency_classifier
+        self.semslot_classifier = semslot_classifier
+        self.semclass_classifier = semclass_classifier
+        initializer(self)
 
-        self.lemma_rule_classifier = lemma_rule_classifier.construct(
+    @classmethod
+    def from_lazy_objects(
+        cls,
+        vocab: VocabularyWeighted,
+        embedder: TokenEmbedder,
+        lemma_rule_classifier: Lazy[LemmaClassifier],
+        pos_feats_classifier: Lazy[FeedForwardClassifier],
+        dependency_classifier: Lazy[DependencyClassifier],
+        semslot_classifier: Lazy[FeedForwardClassifier],
+        semclass_classifier: Lazy[FeedForwardClassifier],
+        initializer: InitializerApplicator = InitializerApplicator()
+    ) -> "MorphoSyntaxSemanticParser":
+
+        embedding_dim = embedder.get_output_dim()
+
+        # Classifier are Lazy because they depend on embedder's output dimentions.
+        lemma_rule_classifier_ = lemma_rule_classifier.construct(
             in_dim=embedding_dim,
-            n_classes=vocab.get_vocab_size("lemma_rule_labels"),
+            labels_namespace="lemma_rule_labels",
         )
-        self.pos_feats_classifier = pos_feats_classifier.construct(
+        pos_feats_classifier_ = pos_feats_classifier.construct(
             in_dim=embedding_dim,
-            n_classes=vocab.get_vocab_size("pos_feats_labels"),
+            labels_namespace="pos_feats_labels",
         )
-        self.dependency_classifier = depencency_classifier.construct(
+        dependency_classifier_ = dependency_classifier.construct(
             in_dim=embedding_dim,
-            n_rel_classes=vocab.get_vocab_size("deprel_labels"),
+            labels_namespace="deprel_labels",
         )
-        self.semslot_classifier = semslot_classifier.construct(
+        semslot_classifier_ = semslot_classifier.construct(
             in_dim=embedding_dim,
-            n_classes=vocab.get_vocab_size("semslot_labels"),
+            labels_namespace="semslot_labels",
         )
-        self.semclass_classifier = semclass_classifier.construct(
+        semclass_classifier_ = semclass_classifier.construct(
             in_dim=embedding_dim,
-            n_classes=vocab.get_vocab_size("semclass_labels"),
+            labels_namespace="semclass_labels",
+        )
+        return cls(
+            vocab=vocab,
+            embedder=embedder,
+            lemma_rule_classifier=lemma_rule_classifier_,
+            pos_feats_classifier=pos_feats_classifier_,
+            dependency_classifier=dependency_classifier_,
+            semslot_classifier=semslot_classifier_,
+            semclass_classifier=semclass_classifier_,
+            initializer=initializer
         )
 
     @override(check_signature=False)
-    def forward(self,
-                words: TextFieldTensors,
-                lemma_rule_labels: Tensor = None,
-                pos_feats_labels: Tensor = None,
-                head_labels: Tensor = None,
-                deprel_labels: Tensor = None,
-                semslot_labels: Tensor = None,
-                semclass_labels: Tensor = None,
-                metadata: Dict = None
-                ) -> Dict[str, Tensor]:
+    def forward(
+        self,
+        words: TextFieldTensors,
+        lemma_rule_labels: Tensor = None,
+        pos_feats_labels: Tensor = None,
+        head_labels: Tensor = None,
+        deprel_labels: Tensor = None,
+        semslot_labels: Tensor = None,
+        semclass_labels: Tensor = None,
+        metadata: Dict = None
+    ) -> Dict[str, Tensor]:
 
         # [batch_size, seq_len, embedding_dim]
         embeddings = self.embedder(**words['tokens'])
@@ -105,15 +139,32 @@ class MorphoSyntaxSemanticParser(Model):
     @override
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
         # Morphology.
-        lemma_accuracy = self.lemma_rule_classifier.get_metrics(reset)['Accuracy']
-        pos_feats_accuracy = self.pos_feats_classifier.get_metrics(reset)['Accuracy']
+        ## lemma
+        lemma_metrics = self.lemma_rule_classifier.get_metrics(reset)
+        lemma_accuracy = lemma_metrics['accuracy']
+        lemma_loss = lemma_metrics['loss']
+        ## pos
+        pos_feats_metrics = self.pos_feats_classifier.get_metrics(reset)
+        pos_feats_accuracy = pos_feats_metrics['accuracy']
+        pos_feats_macro_fscore = pos_feats_metrics['macro-fscore']
+        pos_feats_loss = pos_feats_metrics['loss']
         # Syntax.
         syntax_metrics = self.dependency_classifier.get_metrics(reset)
         uas = syntax_metrics['UAS']
+        arc_loss = syntax_metrics["arc-loss"]
         las = syntax_metrics['LAS']
+        deprel_loss = syntax_metrics["rel-loss"]
         # Semantic.
-        semslot_accuracy = self.semslot_classifier.get_metrics(reset)['Accuracy']
-        semclass_accuracy = self.semclass_classifier.get_metrics(reset)['Accuracy']
+        ## semslot
+        semslot_metrics = self.semslot_classifier.get_metrics(reset)
+        semslot_accuracy = semslot_metrics['accuracy']
+        semslot_macro_fscore = semslot_metrics['macro-fscore']
+        semslot_loss = semslot_metrics['loss']
+        ## semclass
+        semclass_metrics = self.semclass_classifier.get_metrics(reset)
+        semclass_accuracy = semclass_metrics['accuracy']
+        semclass_macro_fscore = semclass_metrics['macro-fscore']
+        semclass_loss = semclass_metrics['loss']
         # Average.
         mean_accuracy = np.mean([
             lemma_accuracy,
@@ -125,13 +176,22 @@ class MorphoSyntaxSemanticParser(Model):
         ])
 
         return {
-            'Lemma': lemma_accuracy,
-            'PosFeats': pos_feats_accuracy,
+            'LemmaAccuracy': lemma_accuracy,
+            'LemmaLoss': lemma_loss,
+            'PosFeatsAccuracy': pos_feats_accuracy,
+            'PosFeatsMacroF1': pos_feats_macro_fscore,
+            'PosFeatsLoss': pos_feats_loss,
             'UAS': uas,
+            'HeadLoss': arc_loss,
             'LAS': las,
-            'SS': semslot_accuracy,
-            'SC': semclass_accuracy,
-            'Avg': mean_accuracy,
+            'DeprelLoss': deprel_loss,
+            'SemSlotAccuracy': semslot_accuracy,
+            'SemSlotMacroF1': semslot_macro_fscore,
+            'SemSlotLoss': semslot_loss,
+            'SemClassAccuracy': semclass_accuracy,
+            'SemClassMacroF1': semclass_macro_fscore,
+            'SemClassLoss': semclass_loss,
+            'AverageAccuracy': mean_accuracy,
         }
 
     @override(check_signature=False)

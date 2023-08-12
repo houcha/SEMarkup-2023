@@ -13,10 +13,10 @@ from allennlp.modules.token_embedders.token_embedder import TokenEmbedder
 from allennlp.nn.util import get_text_field_mask
 from allennlp.nn.initializers import InitializerApplicator
 
-from .feedforward_classifier import FeedForwardClassifier, LemmaClassifier
-from .dependency_classifier import DependencyClassifier
-from .lemmatize_helper import LemmaRule, predict_lemma_from_rule
 from .vocabulary import VocabularyWeighted
+from .feedforward_classifier import FeedForwardClassifier
+from .lemma_classifier import LemmaClassifier
+from .dependency_classifier import DependencyClassifier
 
 
 @Model.register('morpho_syntax_semantic_parser', constructor="from_lazy_objects")

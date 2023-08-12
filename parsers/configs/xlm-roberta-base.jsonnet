@@ -40,7 +40,8 @@
             "hid_dim": 512,
             "activation": "relu",
             "dropout": 0.1,
-            "dictionaries": [
+            "paradigm_dictionary_path": "dicts/MorphoDic_full_utf8_abbrs.txt",
+            "dictionary_lemmas_info": [
                 {
                     "path": "dicts/Compreno.txt",
                     "lemma_match_pattern": "\\d+:(.*)"

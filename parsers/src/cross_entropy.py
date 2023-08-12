@@ -1,8 +1,8 @@
 from overrides import override
-
 from typing import Optional
 
 import torch
+from torch import Tensor, BoolTensor
 import torch.nn.functional as F
 
 from allennlp.training.metrics.metric import Metric
@@ -10,7 +10,7 @@ from allennlp.training.metrics.metric import Metric
 
 @Metric.register("cross-entropy")
 class CrossEntropy(Metric):
-    def __init__(self, weight: Optional[torch.Tensor] = None) -> None:
+    def __init__(self, weight: Optional[Tensor] = None) -> None:
         self._weight = weight
         self._cross_entropy = 0.0
         self._count = 0
@@ -18,10 +18,10 @@ class CrossEntropy(Metric):
     @override
     def __call__(
         self,
-        predictions: torch.Tensor,
-        gold_labels: torch.Tensor,
-        mask: Optional[torch.BoolTensor] = None
-    ) -> torch.Tensor:
+        predictions: Tensor,
+        gold_labels: Tensor,
+        mask: Optional[BoolTensor] = None
+    ) -> Tensor:
         device = predictions.device
 
         if mask is None:
@@ -44,3 +44,4 @@ class CrossEntropy(Metric):
     def reset(self) -> None:
         self._cross_entropy = 0.0
         self._count = 0
+

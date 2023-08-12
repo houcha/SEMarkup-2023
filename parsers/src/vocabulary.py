@@ -31,7 +31,9 @@ class VocabularyWeighted(Vocabulary):
     def __init__(self, counter: Dict[str, Dict[str, int]] = None, **kwargs) -> None:
         super().__init__(counter, **kwargs)
 
-        self.namespace_classes_weights = _calc_classes_weights(counter)
+        self.namespace_classes_weights = None
+        if counter is not None:
+            self.namespace_classes_weights = _calc_classes_weights(counter)
 
     def get_weight_vector(self, namespace: str) -> torch.Tensor:
         """

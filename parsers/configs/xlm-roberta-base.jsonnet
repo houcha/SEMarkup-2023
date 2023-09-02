@@ -57,7 +57,7 @@
             ],
             "topk": 10,
         },
-        "pos_feats_classifier": {
+        "feats_classifier": {
             "hid_dim": 1024,
             "activation": "relu",
             "dropout": 0.1,
@@ -99,7 +99,7 @@
                 [ # First group of layers.
                     [
                     "lemma_rule_classifier",
-                    "pos_feats_classifier",
+                    "feats_classifier",
                     "dependency_classifier",
                     "semslot_classifier",
                     "semclass_classifier"

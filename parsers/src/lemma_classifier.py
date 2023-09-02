@@ -3,6 +3,7 @@ from typing import Dict, List, Optional
 
 import re
 import string
+import ast
 
 import torch
 from torch import Tensor
@@ -19,11 +20,10 @@ from .accuracy import Accuracy
 @Model.register('lemma_classifier')
 class LemmaClassifier(Model):
     """
-    FeedForwardClassifier specialization for lemma classification.
+    Lemmas feed-forward classifier.
     """
 
     PUNCTUATION = set(string.punctuation)
-    COLLISION_TOKEN = "@@COLLISION@@"
 
     def __init__(
         self,
@@ -46,7 +46,7 @@ class LemmaClassifier(Model):
         # Paradigm dictionary.
         self.paradigm_dictionary = dict()
         if paradigm_dictionary_path:
-            self.paradigm_dictionary = self.build_paradigm_dictionary(paradigm_dictionary_path)
+            self.paradigm_dictionary = self.parse_paradigm_dictionary(paradigm_dictionary_path)
 
         # Dictionary lemmas.
         self.dictionary_lemmas = set()
@@ -64,14 +64,15 @@ class LemmaClassifier(Model):
         embeddings: Tensor,
         labels: Tensor = None,
         mask: Tensor = None,
-        metadata: Dict = None
+        metadata: Dict = None,
+        feats_preds = None
     ) -> Dict[str, Tensor]:
 
         classifier_output = self.classifier.forward(embeddings, labels, mask)
         logits, loss = classifier_output['logits'].cpu(), classifier_output['loss']
         labels, mask = labels.cpu().numpy(), mask.cpu().numpy()
 
-        batch_size, sentence_max_length = logits.shape[0], logits.shape[1]
+        batch_size, sentence_max_length, _ = logits.shape
         # Find top most confident lemma rules for each token.
         top_rules = torch.argmax(logits, dim=-1).numpy()
         # Predict lemmas.
@@ -87,7 +88,7 @@ class LemmaClassifier(Model):
 
         # If we are at inference, try to improve classifier predictions.
         if not self.training:
-            self.correct_predictions(logits, predictions, metadata)
+            self.correct_predictions(logits, predictions, metadata, feats_preds)
 
         if labels is not None:
             flatten = lambda list2d: [el for list1d in list2d for el in list1d]
@@ -120,7 +121,7 @@ class LemmaClassifier(Model):
             lemmas = set(map(normalize, lemmas))
         return lemmas
 
-    def build_paradigm_dictionary(self, dictionary_path: str) -> dict:
+    def parse_paradigm_dictionary(self, dictionary_path: str) -> dict:
         dictionary = dict()
         with open(dictionary_path, 'r') as f:
             while line := f.readline():
@@ -128,29 +129,52 @@ class LemmaClassifier(Model):
                 if not line.strip():
                     continue
 
-                lemma, _ = line.strip().split('\t')
+                lemma, lemma_feats = line.strip().split('\t')
                 lemma_normalized = normalize(lemma)
+                lemma_feats_ud = self.convert_msd_to_ud(lemma_feats, lemma_normalized)
 
                 # Use set to avoid duplicates within a paradigm.
-                unique_wordforms = set()
-                unique_wordforms.add(lemma_normalized)
+                wordforms_feats = dict()
+                wordforms_feats[lemma_normalized] = lemma_feats_ud
                 while (line := f.readline()):
                     # Newline indicates the end of the paradigm group.
                     if not line.strip():
                         break
-                    wordform, _ = line.strip().split('\t')
+                    wordform, msd_feats = line.strip().split('\t')
                     wordform_normalized = normalize(wordform)
-                    unique_wordforms.add(wordform_normalized)
+                    ud_feats = self.convert_msd_to_ud(msd_feats, wordform_normalized)
+                    #if ud_feats:
+                    #    print(f"wordform: {wordform_normalized} msd_feats: {msd_feats} ud_feats: {ud_feats}")
+                    #if wordform_normalized == 'ком':
+                    #    print(f"msd_feats: {msd_feats}, ud_feats: {ud_feats}")
+                    wordforms_feats[wordform_normalized] = ud_feats
 
-                for wordform in unique_wordforms:
-                    dictionary[wordform] = lemma_normalized if wordform not in dictionary else LemmaClassifier.COLLISION_TOKEN
+                for wordform, feats in wordforms_feats.items():
+                    if wordform not in dictionary:
+                        dictionary[wordform] = dict()
+                    # If there is more than one lemma for the wordform and the features in the dictionary
+                    # then paradigm dictionary is of no use.
+                    if str(feats) in dictionary[wordform] and lemma_normalized != dictionary[wordform][str(feats)]:
+                        # print(f"== word {wordform}, {str(feats)} and lemma {lemma_normalized} already present with lemma {dictionary[wordform][str(feats)]}=already in dict")
+                        dictionary[wordform][str(feats)] = None
+                    else:
+                        dictionary[wordform][str(feats)] = lemma_normalized
+
+        # Collapse single element features in order to reduce allocated space.
+        for wordform, feats in dictionary.items():
+            lemmas = set()
+            for feat, lemma in feats.items():
+                lemmas.add(lemma)
+            if len(lemmas) == 1:
+                dictionary[wordform] = list(lemmas)[0]
         return dictionary
 
     def correct_predictions(
         self,
         logits: Tensor,
         predictions: List[List[str]],
-        metadata: Dict
+        metadata: Dict,
+        feats_preds = None
     ):
         """
         Correct classifier predictions using external dictionaries (if given).
@@ -163,6 +187,8 @@ class LemmaClassifier(Model):
         for i, sentence in enumerate(metadata):
             for j, token in enumerate(sentence):
                 wordform = token["form"]
+                # FIXME
+                gold_lemma = token["lemma"]
 
                 # Lemmatizer usually does well with titles (e.g. 'Вася') and different kind of dates (like '70-е'),
                 # whereas dictionaries don't, so skip any "corrections" in that case.
@@ -172,7 +198,7 @@ class LemmaClassifier(Model):
                 # First check if word is present in dictionary of paradigms.
                 # If it is, and it also has no collisions, then we can predict its lemma with 100% confidence.
                 if self.paradigm_dictionary:
-                    lemma = self.lookup_lemma_in_paradigm_dictionary(wordform, token["lemma"])
+                    lemma = self.lookup_lemma_in_paradigm_dictionary(wordform, feats_preds[i][j], gold_lemma)
                     if lemma is not None:
                         predictions[i][j] = lemma
                         continue
@@ -187,19 +213,59 @@ class LemmaClassifier(Model):
                         predictions[i][j] = lemma
                         continue
 
-                                                                # FIXME!
-    def lookup_lemma_in_paradigm_dictionary(self, wordform: str, gold_lemma: str) -> Optional[str]:
+    def lookup_lemma_in_paradigm_dictionary(
+        self,
+        wordform: str,
+        feats_predicted: str,
+        gold_lemma # FIXME
+    ) -> Optional[str]:
+
+        def convert_str_feats_to_dict(feats: str) -> dict:
+            feats_dict = dict()
+            for feat in feats.split('|'):
+                try:
+                    category, grammeme = feat.split('=')
+                    assert category not in feats_dict
+                    feats_dict[category] = grammeme
+                except:
+                    continue
+            return feats_dict
+
+        result_lemma = None
         wordform_normalized = normalize(wordform)
         if wordform_normalized in self.paradigm_dictionary:
-            lemma = self.paradigm_dictionary[wordform_normalized]
-            if lemma != LemmaClassifier.COLLISION_TOKEN:
-                if lemma != normalize(gold_lemma):
-                    print(f"Compreno: token {wordform_normalized}, dictionary_lemma={lemma} != {normalize(gold_lemma)}=gold_lemma")
-                return lemma
+            value = self.paradigm_dictionary[wordform_normalized]
+            if isinstance(value, dict):
+                feats_to_lemma = value
+
+                # FIXME
+                has_gold_lemma_in_featues = False
+                lemmas_tried = []
+
+                feats_predicted = convert_str_feats_to_dict(feats_predicted)
+
+                best_similarity, best_lemma = 0.0, None
+                for feats, lemma_normalized in feats_to_lemma.items():
+                    feats = ast.literal_eval(feats) # Convert sting back to dict.
+                    similarity = self.count_common_features(feats, feats_predicted)
+                    # FIXME
+                    if lemma_normalized == normalize(gold_lemma):
+                        has_gold_lemma_in_featues = True
+                    lemmas_tried.append(lemma_normalized)
+                    if best_similarity < similarity:
+                        best_similarity = similarity
+                        best_lemma = lemma_normalized
+                result_lemma = best_lemma
+                # FIXME
+                #if not has_gold_lemma_in_featues:
+                #    print(f"Compreno: token {wordform_normalized}, dictionary_lemmas={feats_to_lemma.items()} != {normalize(gold_lemma)}=gold_lemma")
             else:
-                pass
-                # print(f"wordform_normalized: {wordform_normalized} has collision")
-        return None
+                # Single lemma, no collisions.
+                lemma = value
+                result_lemma = lemma
+                #if lemma != normalize(gold_lemma):
+                #    print(f"Compreno: token {wordform_normalized}, dictionary_lemma={lemma} != {normalize(gold_lemma)}=gold_lemma")
+        return result_lemma
 
     def find_topk_dictionary_lemma(self, wordform: str, token_logits: Tensor) -> Optional[str]:
         topk_lemma_rules = torch.topk(token_logits, k=self.topk, dim=-1).indices.numpy()
@@ -234,4 +300,123 @@ class LemmaClassifier(Model):
     @staticmethod
     def is_title(word: str) -> bool:
         return word[0].isupper()
+
+    @staticmethod
+    def convert_msd_to_ud(msd: str, wordform: str # FIXME
+    ) -> dict:
+        convertion_table = [
+            { # 0
+                "Noun":      ("pos", "NOUN"),
+                "Adjective": ("pos", "ADJ"),
+                "Adverb":    ("pos", "ADV"),
+                "Verb":      ("pos", "VERB"),
+            },
+            { # 1
+                "GTImperative":            ("Mood", "Imp"),
+                "GTVerb":                  ("VerbForm", "Fin"),
+                "GTInfinitive":            ("VerbForm", "Inf"),
+                "GTParticiple":            ("VerbForm", "Part"),
+                "GTParticipleAttributive": ("VerbForm", "Part"),
+                "GTAdverb":                ("VerbForm", "Conv"),
+            },
+            {},# 2
+            { # 3
+                "Animate":   ("Animacy", "Anim"),
+                "Inanimate": ("Animacy", "Inan")
+            },
+            { # 4
+                "Imperfective": ("Aspect", "Imp"),
+                "Perfective":   ("Aspect", "Perf")
+            },
+            { # 5
+                "Nominative":    ("Case", "Nom"),
+                "Genitive":      ("Case", "Gen"),
+                "Partitive":     ("Case", "Par"),
+                "Dative":        ("Case", "Dat"),
+                "Accusative":    ("Case", "Acc"),
+                "Prepositional": ("Case", "Loc"),
+                "Locative":      ("Case", "Loc"),
+                "Instrumental":  ("Case", "Ins"),
+                "Vocative":      ("Case", "Voc"),
+            },
+            {},# 6
+            {},# 7
+            {},# 8
+            {},# 9
+            {
+                "PluraliaTantum":   ("Number", "Plur"),
+                "SingulariaTantum": ("Number", "Sing")
+            },# 10
+            {},# 11
+            { # 12
+                "DegreePositive":    ("Degree", "Pos"),
+                "DegreeComparative": ("Degree", "Cmp"),
+                "DegreeSuperlative": ("Degree", "Sup")
+            },
+            {},# 13
+            { # 14
+                "Masculine": ("Gender", "Masc"),
+                "Feminine":  ("Gender", "Fem"),
+                "Neuter":    ("Gender", "Neut")
+            },
+            {},# 15
+            {},# 16
+            { # 17
+                "Singular": ("Number", "Sing"),
+                "Plural":   ("Number", "Plur")
+            },
+            {},# 18
+            {},# 19
+            {},# 20
+            { # 21
+                "PersonFirst":  ("Person", 1),
+                "PersonSecond": ("Person", 2),
+                "PersonThird":  ("Person", 3),
+            },
+            {},# 22
+            {},# 23
+            {},# 24
+            {},# 25
+            {},# 26
+            {},# 27
+            { # 28
+                "Past":    ("Tense", "Past"),
+                "Present": ("Tense", "Pres"),
+                "Future":  ("Tense", "Fut"),
+            },
+            {}, # 29
+            { # 30
+                "Active":   ("Voice", "Act"),
+                "Passive":  ("Voice", "Pass"),
+                "VoiceSya": ("Voice", "Mid")
+            }
+        ]
+        ud_feats = dict()
+        msd_feats = msd.split(';')
+        pos = msd_feats[0]
+        if pos in convertion_table[0]:
+            for position, grammeme in enumerate(msd_feats):
+                if position == 0:
+                    assert grammeme in convertion_table[0]
+                if not grammeme or not convertion_table[position]:
+                    continue
+                if grammeme not in convertion_table[position]:
+                   #assert msd.split(';')[0] in {"Noun", "Adjective", "Adverb", "Verb"}, f"{msd.split(';')[0]} is extra tag"
+                   print(f"{grammeme} at {position} position is OOV, allowed grammemes: {convertion_table[position].keys()}, wordform: {wordform}, msd feats: {msd}")
+                   continue
+                ud_category, ud_tag = convertion_table[position][grammeme]
+                ud_feats[ud_category] = ud_tag
+        return ud_feats
+
+    @staticmethod
+    def count_common_features(
+        lhs_feats: Dict[str, str],
+        rhs_feats: Dict[str, str]
+    ) -> float:
+        common_feats_count = sum([
+            lhs_feats[category] == rhs_feats[category]
+            for category in lhs_feats
+            if category in rhs_feats
+        ])
+        return common_feats_count
 

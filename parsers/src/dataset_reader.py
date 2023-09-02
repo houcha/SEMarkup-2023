@@ -120,8 +120,8 @@ class ComprenoUDDatasetReader(DatasetReader):
             fields['lemma_rule_labels'] = SequenceLabelField(lemma_rules, text_field, 'lemma_rule_labels')
 
         if upos_tags is not None and feats_tags is not None:
-            joint_pos_feats = [f"{upos_tag}#{feats_tag}" for upos_tag, feats_tag in zip(upos_tags, feats_tags)]
-            fields['pos_feats_labels'] = SequenceLabelField(joint_pos_feats, text_field, 'pos_feats_labels')
+            joint_pos_feats = [f"pos={upos_tag}|{feats_tag}" for upos_tag, feats_tag in zip(upos_tags, feats_tags)]
+            fields['feats_labels'] = SequenceLabelField(joint_pos_feats, text_field, 'feats_labels')
 
         if heads is not None:
             fields['head_labels'] = SequenceLabelField(heads, text_field, 'head_labels')

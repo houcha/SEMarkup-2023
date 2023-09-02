@@ -30,6 +30,7 @@ class FeedForwardClassifier(Model):
     ):
         super().__init__(vocab)
 
+        self.labels_namespace = labels_namespace
         n_classes = vocab.get_vocab_size(labels_namespace)
         self.classifier = nn.Sequential(
             nn.Dropout(dropout),
@@ -79,4 +80,13 @@ class FeedForwardClassifier(Model):
             "macro-fscore": self.fscore.get_metric(reset)["macro-fscore"],
             "loss": self.loss.get_metric(reset)
         }
+
+    def predict_from_ids(self, predictions_ids: Tensor) -> List[List]:
+        batch_size, sentence_max_length = predictions_ids.shape
+        predictions = [[None for i in range(sentence_max_length)] for j in range(batch_size)]
+        predictions_ids = predictions_ids.cpu().numpy()
+        for i, sentence_predictions_ids in enumerate(predictions_ids):
+            for j, prediction_id in enumerate(sentence_predictions_ids):
+                predictions[i][j] = self.vocab.get_token_from_index(prediction_id, self.labels_namespace)
+        return predictions
 

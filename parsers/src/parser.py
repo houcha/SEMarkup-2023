@@ -31,7 +31,7 @@ class MorphoSyntaxSemanticParser(Model):
         vocab: VocabularyWeighted,
         embedder: TokenEmbedder,
         lemma_rule_classifier: LemmaClassifier,
-        pos_feats_classifier: FeedForwardClassifier,
+        feats_classifier: FeedForwardClassifier,
         dependency_classifier: DependencyClassifier,
         semslot_classifier: FeedForwardClassifier,
         semclass_classifier: FeedForwardClassifier,
@@ -41,7 +41,7 @@ class MorphoSyntaxSemanticParser(Model):
 
         self.embedder = embedder
         self.lemma_rule_classifier = lemma_rule_classifier
-        self.pos_feats_classifier = pos_feats_classifier
+        self.feats_classifier = feats_classifier
         self.dependency_classifier = dependency_classifier
         self.semslot_classifier = semslot_classifier
         self.semclass_classifier = semclass_classifier
@@ -53,7 +53,7 @@ class MorphoSyntaxSemanticParser(Model):
         vocab: VocabularyWeighted,
         embedder: TokenEmbedder,
         lemma_rule_classifier: Lazy[LemmaClassifier],
-        pos_feats_classifier: Lazy[FeedForwardClassifier],
+        feats_classifier: Lazy[FeedForwardClassifier],
         dependency_classifier: Lazy[DependencyClassifier],
         semslot_classifier: Lazy[FeedForwardClassifier],
         semclass_classifier: Lazy[FeedForwardClassifier],
@@ -67,9 +67,9 @@ class MorphoSyntaxSemanticParser(Model):
             in_dim=embedding_dim,
             labels_namespace="lemma_rule_labels",
         )
-        pos_feats_classifier_ = pos_feats_classifier.construct(
+        feats_classifier_ = feats_classifier.construct(
             in_dim=embedding_dim,
-            labels_namespace="pos_feats_labels",
+            labels_namespace="feats_labels",
         )
         dependency_classifier_ = dependency_classifier.construct(
             in_dim=embedding_dim,
@@ -87,7 +87,7 @@ class MorphoSyntaxSemanticParser(Model):
             vocab=vocab,
             embedder=embedder,
             lemma_rule_classifier=lemma_rule_classifier_,
-            pos_feats_classifier=pos_feats_classifier_,
+            feats_classifier=feats_classifier_,
             dependency_classifier=dependency_classifier_,
             semslot_classifier=semslot_classifier_,
             semclass_classifier=semclass_classifier_,
@@ -99,7 +99,7 @@ class MorphoSyntaxSemanticParser(Model):
         self,
         words: TextFieldTensors,
         lemma_rule_labels: Tensor = None,
-        pos_feats_labels: Tensor = None,
+        feats_labels: Tensor = None,
         head_labels: Tensor = None,
         deprel_labels: Tensor = None,
         semslot_labels: Tensor = None,
@@ -112,26 +112,29 @@ class MorphoSyntaxSemanticParser(Model):
         # [batch_size, seq_len]
         mask = get_text_field_mask(words)
 
-        lemma_rule = self.lemma_rule_classifier(embeddings, lemma_rule_labels, mask, metadata)
-        pos_feats = self.pos_feats_classifier(embeddings, pos_feats_labels, mask)
-        syntax = self.dependency_classifier(embeddings, head_labels, deprel_labels, mask)
-        semslot = self.semslot_classifier(embeddings, semslot_labels, mask)
-        semclass = self.semclass_classifier(embeddings, semclass_labels, mask)
+        feats_output = self.feats_classifier(embeddings, feats_labels, mask)
+        feats_preds = None
+        if not self.training:
+            feats_preds = self.feats_classifier.predict_from_ids(feats_output["preds"])
+        lemma_output = self.lemma_rule_classifier(embeddings, lemma_rule_labels, mask, metadata, feats_preds)
+        syntax_output = self.dependency_classifier(embeddings, head_labels, deprel_labels, mask)
+        semslot_output = self.semslot_classifier(embeddings, semslot_labels, mask)
+        semclass_output = self.semclass_classifier(embeddings, semclass_labels, mask)
 
-        loss = lemma_rule['loss'] + \
-               pos_feats['loss'] + \
-               syntax['arc_loss'] + \
-               syntax['rel_loss'] + \
-               semslot['loss'] + \
-               semclass['loss']
+        loss = lemma_output['loss'] + \
+               feats_output['loss'] + \
+               syntax_output['arc_loss'] + \
+               syntax_output['rel_loss'] + \
+               semslot_output['loss'] + \
+               semclass_output['loss']
 
         return {
-            'lemma_rule_preds': lemma_rule['preds'],
-            'pos_feats_preds': pos_feats['preds'],
-            'head_preds': syntax['arc_preds'],
-            'deprel_preds': syntax['rel_preds'],
-            'semslot_preds': semslot['preds'],
-            'semclass_preds': semclass['preds'],
+            'lemma_preds': lemma_output['preds'],
+            'feats_preds': feats_output['preds'],
+            'head_preds': syntax_output['arc_preds'],
+            'deprel_preds': syntax_output['rel_preds'],
+            'semslot_preds': semslot_output['preds'],
+            'semclass_preds': semclass_output['preds'],
             'loss': loss,
             'metadata': metadata,
         }
@@ -144,10 +147,10 @@ class MorphoSyntaxSemanticParser(Model):
         lemma_accuracy = lemma_metrics['accuracy']
         lemma_loss = lemma_metrics['loss']
         ## pos
-        pos_feats_metrics = self.pos_feats_classifier.get_metrics(reset)
-        pos_feats_accuracy = pos_feats_metrics['accuracy']
-        pos_feats_macro_fscore = pos_feats_metrics['macro-fscore']
-        pos_feats_loss = pos_feats_metrics['loss']
+        feats_metrics = self.feats_classifier.get_metrics(reset)
+        feats_accuracy = feats_metrics['accuracy']
+        feats_macro_fscore = feats_metrics['macro-fscore']
+        feats_loss = feats_metrics['loss']
         # Syntax.
         syntax_metrics = self.dependency_classifier.get_metrics(reset)
         uas = syntax_metrics['UAS']
@@ -168,7 +171,7 @@ class MorphoSyntaxSemanticParser(Model):
         # Average.
         mean_accuracy = np.mean([
             lemma_accuracy,
-            pos_feats_accuracy,
+            feats_accuracy,
             uas,
             las,
             semslot_accuracy,
@@ -178,9 +181,9 @@ class MorphoSyntaxSemanticParser(Model):
         return {
             'LemmaAccuracy': lemma_accuracy,
             'LemmaLoss': lemma_loss,
-            'PosFeatsAccuracy': pos_feats_accuracy,
-            'PosFeatsMacroF1': pos_feats_macro_fscore,
-            'PosFeatsLoss': pos_feats_loss,
+            'PosFeatsAccuracy': feats_accuracy,
+            'PosFeatsMacroF1': feats_macro_fscore,
+            'PosFeatsLoss': feats_loss,
             'UAS': uas,
             'HeadLoss': arc_loss,
             'LAS': las,
@@ -212,19 +215,19 @@ class MorphoSyntaxSemanticParser(Model):
         for token in sentence:
             forms.append(token["form"])
 
-        # Lemma classifier handles predictions on its own.
-        lemmas = output["lemma_rule_preds"][0]
+        # Lemma classifier handles predictions itself.
+        lemmas = output["lemma_preds"][0]
 
         # Restore "glued" pos and feats tags.
         pos_tags = []
         feats_tags = []
-        pos_feats_preds = output["pos_feats_preds"].tolist()[0]
-        for pos_feats_pred in pos_feats_preds:
-            pos_feats_str = self.vocab.get_token_from_index(pos_feats_pred, "pos_feats_labels")
-            if pos_feats_str == DEFAULT_OOV_TOKEN:
+        feats_preds = output["feats_preds"].tolist()[0]
+        for feats_pred in feats_preds:
+            feats_str = self.vocab.get_token_from_index(feats_pred, "feats_labels")
+            if feats_str == DEFAULT_OOV_TOKEN:
                 pos_tag, feats_tag = '_', '_'
             else:
-                pos_tag, feats_tag = pos_feats_str.split('#')
+                pos_tag, feats_tag = feats_str.split('|', 1)
             pos_tags.append(pos_tag)
             feats_tags.append(feats_tag)
 

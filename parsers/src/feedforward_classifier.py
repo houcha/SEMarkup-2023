@@ -82,14 +82,14 @@ class FeedForwardClassifier(Model):
             "loss": self.loss.get_metric(reset)
         }
 
-        def decode_ids(self, predictions_ids: Tensor, oov_token_replacement=None) -> List[List]:
+    def decode_ids(self, predictions_ids: Tensor, oov_token_replacement=None) -> List[List]:
         batch_size, sentence_max_length = predictions_ids.shape
         predictions = [[None for i in range(sentence_max_length)] for j in range(batch_size)]
         predictions_ids = predictions_ids.tolist()
         for i, sentence_predictions_ids in enumerate(predictions_ids):
             for j, prediction_id in enumerate(sentence_predictions_ids):
                 predictions[i][j] = self.vocab.get_token_from_index(prediction_id, self.labels_namespace)
-                if oov_token is not None and predictions[i][j] == DEFAULT_OOV_TOKEN:
+                if oov_token_replacement is not None and predictions[i][j] == DEFAULT_OOV_TOKEN:
                     predictions[i][j] = oov_token_replacement
         return predictions
 

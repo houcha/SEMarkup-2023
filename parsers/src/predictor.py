@@ -16,6 +16,7 @@ class MorphoSyntaxSemanticPredictor(Predictor):
 
     @override(check_signature=False)
     def dump_line(self, output: Dict[str, list]) -> str:
+        assert len(output["metadata"]) == 1, "dump_line can only work with batch of size 1"
         metadata = output["metadata"]
 
         tags_iterator = zip(

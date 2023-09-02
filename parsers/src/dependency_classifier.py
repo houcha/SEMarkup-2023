@@ -96,8 +96,8 @@ class DependencyClassifier(Model):
         predicted_arcs = self._internal_to_conllu_arc_format(predicted_arcs)
 
         return {
-            'arc_preds': predicted_arcs,
-            'rel_preds': predicted_rels,
+            'arc_predictions': predicted_arcs,
+            'rel_prediction_ids': predicted_rels,
             'arc_loss': arc_loss,
             'rel_loss': rel_loss
         }

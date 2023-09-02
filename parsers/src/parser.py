@@ -113,10 +113,10 @@ class MorphoSyntaxSemanticParser(Model):
         mask = get_text_field_mask(words)
 
         feats_output = self.feats_classifier(embeddings, feats_labels, mask)
-        feats_preds = None
+        feats_predictions = None
         if not self.training:
-            feats_preds = self.feats_classifier.predict_from_ids(feats_output["preds"])
-        lemma_output = self.lemma_rule_classifier(embeddings, lemma_rule_labels, mask, metadata, feats_preds)
+            feats_predictions = self.feats_classifier.decode_ids(feats_output["prediction_ids"])
+        lemma_output = self.lemma_rule_classifier(embeddings, lemma_rule_labels, mask, metadata, feats_predictions)
         syntax_output = self.dependency_classifier(embeddings, head_labels, deprel_labels, mask)
         semslot_output = self.semslot_classifier(embeddings, semslot_labels, mask)
         semclass_output = self.semclass_classifier(embeddings, semclass_labels, mask)
@@ -129,12 +129,12 @@ class MorphoSyntaxSemanticParser(Model):
                semclass_output['loss']
 
         return {
-            'lemma_preds': lemma_output['preds'],
-            'feats_preds': feats_output['preds'],
-            'head_preds': syntax_output['arc_preds'],
-            'deprel_preds': syntax_output['rel_preds'],
-            'semslot_preds': semslot_output['preds'],
-            'semclass_preds': semclass_output['preds'],
+            'lemma_predictions': lemma_output['predictions'],
+            'feats_prediction_ids': feats_output['prediction_ids'],
+            'head_predictions': syntax_output['arc_predictions'],
+            'deprel_prediction_ids': syntax_output['rel_prediction_ids'],
+            'semslot_prediction_ids': semslot_output['prediction_ids'],
+            'semclass_prediction_ids': semclass_output['prediction_ids'],
             'loss': loss,
             'metadata': metadata,
         }
@@ -200,78 +200,70 @@ class MorphoSyntaxSemanticParser(Model):
     @override(check_signature=False)
     def make_output_human_readable(self, output: Dict[str, Tensor]) -> Dict[str, list]:
         sentences = output["metadata"]
-        # Make sure batch_size is 1 during prediction.
-        assert len(sentences) == 1
-        sentence = sentences[0]
-        metadata = sentence.metadata
 
-        # Restore ids.
+        # Restore ids and forms.
         ids = []
-        for token in sentence:
-            ids.append(token["id"])
-
-        # Restore forms.
         forms = []
-        for token in sentence:
-            forms.append(token["form"])
+        for sentence in sentences:
+            sentence_ids = []
+            sentence_forms = []
+            for token in sentence:
+                sentence_ids.append(token["id"])
+                sentence_forms.append(token["form"])
+            ids.append(sentence_ids)
+            forms.append(sentence_forms)
 
         # Lemma classifier handles predictions itself.
-        lemmas = output["lemma_preds"][0]
+        lemmas = output["lemma_predictions"]
 
-        # Restore "glued" pos and feats tags.
+        # Restore "glued" POS and features tags.
         pos_tags = []
         feats_tags = []
-        feats_preds = output["feats_preds"].tolist()[0]
-        for feats_pred in feats_preds:
-            feats_str = self.vocab.get_token_from_index(feats_pred, "feats_labels")
-            if feats_str == DEFAULT_OOV_TOKEN:
+        pos_feats_predictions = self.feats_classifier.decode_ids(output["feats_prediction_ids"])
+        for sentence_pos_feats_predictions in pos_feats_predictions:
+            sentence_pos_tags = []
+            sentence_feats_tags = []
+            for pos_feats_prediction in sentence_pos_feats_predictions:
                 pos_tag, feats_tag = '_', '_'
-            else:
-                pos_tag, feats_tag = feats_str.split('|', 1)
-            pos_tags.append(pos_tag)
-            feats_tags.append(feats_tag)
+                if pos_feats_prediction != DEFAULT_OOV_TOKEN:
+                    pos_tag, feats_tag = pos_feats_prediction.split('|', 1)
+                sentence_pos_tags.append(pos_tag)
+                sentence_feats_tags.append(feats_tag)
+            pos_tags.append(sentence_pos_tags)
+            feats_tags.append(sentence_feats_tags)
 
         # Restore heads.
         # Heads are integers, so simply convert them to strings.
-        heads = list(map(str, output["head_preds"].tolist()[0]))
+        heads = [list(map(str, sentence_predictions))
+                for sentence_predictions in output["head_predictions"].tolist()]
 
         # Restore deprels.
         deprels = []
-        deprel_preds = output["deprel_preds"].tolist()[0]
-        for deprel_pred in deprel_preds:
-            deprel = self.vocab.get_token_from_index(deprel_pred, "deprel_labels")
-            if deprel == DEFAULT_OOV_TOKEN:
-                deprel = '_'
-            deprels.append(deprel)
+        deprel_ids = output["deprel_prediction_ids"].tolist()
+        for sentence_deprel_ids in deprel_ids:
+            sentence_deprels = []
+            for deprel_id in sentence_deprel_ids:
+                deprel = self.vocab.get_token_from_index(deprel_id, "deprel_labels")
+                if deprel == DEFAULT_OOV_TOKEN:
+                    deprel = '_'
+                sentence_deprels.append(deprel)
+            deprels.append(sentence_deprels)
 
         # Restore semslots.
-        semslots = []
-        semslot_preds = output["semslot_preds"].tolist()[0]
-        for semslot_pred in semslot_preds:
-            semslot = self.vocab.get_token_from_index(semslot_pred, "semslot_labels")
-            if semslot == DEFAULT_OOV_TOKEN:
-                semslots = '_'
-            semslots.append(semslot)
-
+        semslots = self.semslot_classifier.decode_ids(output["semslot_prediction_ids"], oov_token_replacement='_')
         # Restore semclasses.
-        semclasses = []
-        semclass_preds = output["semclass_preds"].tolist()[0]
-        for semclass_pred in semclass_preds:
-            semclass = self.vocab.get_token_from_index(semclass_pred, "semclass_labels")
-            if semclass == DEFAULT_OOV_TOKEN:
-                semclasss = '_'
-            semclasses.append(semclass)
+        semclasses = self.semclass_classifier.decode_ids(output["semclass_prediction_ids"], oov_token_replacement='_')
 
         return {
-            "metadata": [metadata],
-            "ids": [ids],
-            "forms": [forms],
-            "lemmas": [lemmas],
-            "pos": [pos_tags],
-            "feats": [feats_tags],
-            "heads": [heads],
-            "deprels": [deprels],
-            "semslots": [semslots],
-            "semclasses": [semclasses],
+            "metadata": sentences,
+            "ids": ids,
+            "forms": forms,
+            "lemmas": lemmas,
+            "pos": pos_tags,
+            "feats": feats_tags,
+            "heads": heads,
+            "deprels": deprels,
+            "semslots": semslots,
+            "semclasses": semclasses,
         }
 

@@ -65,12 +65,11 @@ class LemmaClassifier(Model):
         labels: Tensor = None,
         mask: Tensor = None,
         metadata: Dict = None,
-        feats_preds = None
+        feats_predictions = None
     ) -> Dict[str, Tensor]:
 
         classifier_output = self.classifier.forward(embeddings, labels, mask)
-        logits, loss = classifier_output['logits'].cpu(), classifier_output['loss']
-        labels, mask = labels.cpu().numpy(), mask.cpu().numpy()
+        logits, loss, mask = classifier_output['logits'].cpu(), classifier_output['loss'], mask.cpu().numpy()
 
         batch_size, sentence_max_length, _ = logits.shape
         # Find top most confident lemma rules for each token.
@@ -88,7 +87,7 @@ class LemmaClassifier(Model):
 
         # If we are at inference, try to improve classifier predictions.
         if not self.training:
-            self.correct_predictions(logits, predictions, metadata, feats_preds)
+            self.correct_predictions(logits, predictions, metadata, feats_predictions)
 
         if labels is not None:
             flatten = lambda list2d: [el for list1d in list2d for el in list1d]
@@ -98,7 +97,7 @@ class LemmaClassifier(Model):
                 mask.flatten()
             )
 
-        return {'preds': predictions, 'loss': loss}
+        return {'predictions': predictions, 'loss': loss}
 
     def update_metrics(self, predictions: List, labels: List, mask):
         self.metric(predictions, labels, mask)
@@ -174,7 +173,7 @@ class LemmaClassifier(Model):
         logits: Tensor,
         predictions: List[List[str]],
         metadata: Dict,
-        feats_preds = None
+        feats_predictions = None
     ):
         """
         Correct classifier predictions using external dictionaries (if given).
@@ -198,7 +197,7 @@ class LemmaClassifier(Model):
                 # First check if word is present in dictionary of paradigms.
                 # If it is, and it also has no collisions, then we can predict its lemma with 100% confidence.
                 if self.paradigm_dictionary:
-                    lemma = self.lookup_lemma_in_paradigm_dictionary(wordform, feats_preds[i][j], gold_lemma)
+                    lemma = self.lookup_lemma_in_paradigm_dictionary(wordform, feats_predictions[i][j], gold_lemma)
                     if lemma is not None:
                         predictions[i][j] = lemma
                         continue

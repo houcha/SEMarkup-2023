@@ -130,7 +130,7 @@ class LemmaClassifier(Model):
 
                 lemma, lemma_feats = line.strip().split('\t')
                 lemma_normalized = normalize(lemma)
-                lemma_feats_ud = self.convert_msd_to_ud(lemma_feats, lemma_normalized)
+                lemma_feats_ud = self.convert_msd_to_ud(lemma_feats)
 
                 # Use set to avoid duplicates within a paradigm.
                 wordforms_feats = dict()
@@ -141,11 +141,7 @@ class LemmaClassifier(Model):
                         break
                     wordform, msd_feats = line.strip().split('\t')
                     wordform_normalized = normalize(wordform)
-                    ud_feats = self.convert_msd_to_ud(msd_feats, wordform_normalized)
-                    #if ud_feats:
-                    #    print(f"wordform: {wordform_normalized} msd_feats: {msd_feats} ud_feats: {ud_feats}")
-                    #if wordform_normalized == 'ком':
-                    #    print(f"msd_feats: {msd_feats}, ud_feats: {ud_feats}")
+                    ud_feats = self.convert_msd_to_ud(msd_feats)
                     wordforms_feats[wordform_normalized] = ud_feats
 
                 for wordform, feats in wordforms_feats.items():
@@ -153,11 +149,11 @@ class LemmaClassifier(Model):
                         dictionary[wordform] = dict()
                     # If there is more than one lemma for the wordform and the features in the dictionary
                     # then paradigm dictionary is of no use.
-                    if str(feats) in dictionary[wordform] and lemma_normalized != dictionary[wordform][str(feats)]:
-                        # print(f"== word {wordform}, {str(feats)} and lemma {lemma_normalized} already present with lemma {dictionary[wordform][str(feats)]}=already in dict")
-                        dictionary[wordform][str(feats)] = None
+                    feats_str = str(feats)
+                    if feats_str in dictionary[wordform] and lemma_normalized != dictionary[wordform][feats_str]:
+                        dictionary[wordform][feats_str] = None
                     else:
-                        dictionary[wordform][str(feats)] = lemma_normalized
+                        dictionary[wordform][feats_str] = lemma_normalized
 
         # Collapse single element features in order to reduce allocated space.
         for wordform, feats in dictionary.items():
@@ -186,8 +182,6 @@ class LemmaClassifier(Model):
         for i, sentence in enumerate(metadata):
             for j, token in enumerate(sentence):
                 wordform = token["form"]
-                # FIXME
-                gold_lemma = token["lemma"]
 
                 # Lemmatizer usually does well with titles (e.g. 'Вася') and different kind of dates (like '70-е'),
                 # whereas dictionaries don't, so skip any "corrections" in that case.
@@ -197,7 +191,7 @@ class LemmaClassifier(Model):
                 # First check if word is present in dictionary of paradigms.
                 # If it is, and it also has no collisions, then we can predict its lemma with 100% confidence.
                 if self.paradigm_dictionary:
-                    lemma = self.lookup_lemma_in_paradigm_dictionary(wordform, feats_predictions[i][j], gold_lemma)
+                    lemma = self.lookup_lemma_in_paradigm_dictionary(wordform, feats_predictions[i][j])
                     if lemma is not None:
                         predictions[i][j] = lemma
                         continue
@@ -216,7 +210,6 @@ class LemmaClassifier(Model):
         self,
         wordform: str,
         feats_predicted: str,
-        gold_lemma # FIXME
     ) -> Optional[str]:
 
         def convert_str_feats_to_dict(feats: str) -> dict:
@@ -237,33 +230,20 @@ class LemmaClassifier(Model):
             if isinstance(value, dict):
                 feats_to_lemma = value
 
-                # FIXME
-                has_gold_lemma_in_featues = False
-                lemmas_tried = []
-
                 feats_predicted = convert_str_feats_to_dict(feats_predicted)
 
                 best_similarity, best_lemma = 0.0, None
                 for feats, lemma_normalized in feats_to_lemma.items():
                     feats = ast.literal_eval(feats) # Convert sting back to dict.
                     similarity = self.count_common_features(feats, feats_predicted)
-                    # FIXME
-                    if lemma_normalized == normalize(gold_lemma):
-                        has_gold_lemma_in_featues = True
-                    lemmas_tried.append(lemma_normalized)
                     if best_similarity < similarity:
                         best_similarity = similarity
                         best_lemma = lemma_normalized
                 result_lemma = best_lemma
-                # FIXME
-                #if not has_gold_lemma_in_featues:
-                #    print(f"Compreno: token {wordform_normalized}, dictionary_lemmas={feats_to_lemma.items()} != {normalize(gold_lemma)}=gold_lemma")
             else:
                 # Single lemma, no collisions.
                 lemma = value
                 result_lemma = lemma
-                #if lemma != normalize(gold_lemma):
-                #    print(f"Compreno: token {wordform_normalized}, dictionary_lemma={lemma} != {normalize(gold_lemma)}=gold_lemma")
         return result_lemma
 
     def find_topk_dictionary_lemma(self, wordform: str, token_logits: Tensor) -> Optional[str]:
@@ -301,8 +281,7 @@ class LemmaClassifier(Model):
         return word[0].isupper()
 
     @staticmethod
-    def convert_msd_to_ud(msd: str, wordform: str # FIXME
-    ) -> dict:
+    def convert_msd_to_ud(msd: str) -> dict:
         convertion_table = [
             { # 0
                 "Noun":      ("pos", "NOUN"),
@@ -400,9 +379,7 @@ class LemmaClassifier(Model):
                 if not grammeme or not convertion_table[position]:
                     continue
                 if grammeme not in convertion_table[position]:
-                   #assert msd.split(';')[0] in {"Noun", "Adjective", "Adverb", "Verb"}, f"{msd.split(';')[0]} is extra tag"
-                   print(f"{grammeme} at {position} position is OOV, allowed grammemes: {convertion_table[position].keys()}, wordform: {wordform}, msd feats: {msd}")
-                   continue
+                    continue
                 ud_category, ud_tag = convertion_table[position][grammeme]
                 ud_feats[ud_category] = ud_tag
         return ud_feats

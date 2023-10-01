@@ -18,7 +18,7 @@ from allennlp.training.metrics import AttachmentScores
 from allennlp.nn.chu_liu_edmonds import decode_mst
 from allennlp.nn.util import replace_masked_values, get_range_vector, get_device_of, move_to_device
 
-from .cross_entropy import CrossEntropy
+from .metrics import CrossEntropy
 
 
 @Model.register('dependency_classifier')

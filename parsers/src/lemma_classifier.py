@@ -14,7 +14,7 @@ from allennlp.data.vocabulary import DEFAULT_OOV_TOKEN
 from .vocabulary import VocabularyWeighted
 from .lemmatize_helper import LemmaRule, predict_lemma_from_rule, normalize, DEFAULT_LEMMA_RULE
 from .feedforward_classifier import FeedForwardClassifier
-from .accuracy import Accuracy
+from .metrics import Accuracy
 
 
 @Model.register('lemma_classifier')

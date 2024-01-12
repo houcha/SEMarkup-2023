@@ -34,13 +34,13 @@ We use AllenNLP command line tools to train and evaluate parsers. Run `allennlp 
 #### Train
 ```
 allennlp train configs/baseline.jsonnet \
-    --serialization-dir serialization_dir \
+    --serialization-dir serialization \
     --include-package src
 ```
 
 #### Predict
 ```
-allennlp predict serialization_dir/model.tar.gz train.conllu \
+allennlp predict serialization/model.tar.gz train.conllu \
     --output-file predictions.txt \
     --include-package src \
     --predictor morpho_syntax_semantic_predictor \

@@ -1,4 +1,4 @@
-from overrides import override
+# from overrides import override
 
 from typing import Dict
 
@@ -61,7 +61,7 @@ class MorphoSyntaxSemanticParser(Model):
             n_classes=vocab.get_vocab_size("semclass_labels"),
         )
 
-    @override(check_signature=False)
+    # @override(check_signature=False)
     def forward(self,
                 words: TextFieldTensors,
                 lemma_rule_labels: Tensor = None,
@@ -102,7 +102,7 @@ class MorphoSyntaxSemanticParser(Model):
             'metadata': metadata,
         }
 
-    @override
+    # @override
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
         # Morphology.
         lemma_accuracy = self.lemma_rule_classifier.get_metrics(reset)['Accuracy']
@@ -134,7 +134,7 @@ class MorphoSyntaxSemanticParser(Model):
             'Avg': mean_accuracy,
         }
 
-    @override(check_signature=False)
+    # @override(check_signature=False)
     def make_output_human_readable(self, output: Dict[str, Tensor]) -> Dict[str, list]:
         sentences = output["metadata"]
         # Make sure batch_size is 1 during prediction.

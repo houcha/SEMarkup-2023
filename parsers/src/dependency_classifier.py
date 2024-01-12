@@ -1,4 +1,5 @@
-from overrides import override
+# Doesn't work in conda
+# from overrides import override
 from copy import deepcopy
 
 from typing import Dict, Tuple
@@ -228,7 +229,7 @@ class DependencyClassifier(Model):
 
         return arc_loss, rel_loss
 
-    @override
+    # @override
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
         return self.metric.get_metric(reset)
 

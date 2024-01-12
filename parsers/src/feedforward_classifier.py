@@ -1,4 +1,4 @@
-from overrides import override
+# from overrides import override
 from typing import Dict, List
 
 import re
@@ -40,7 +40,7 @@ class FeedForwardClassifier(Model):
         self.criterion = nn.CrossEntropyLoss()
         self.metric = CategoricalAccuracy()
 
-    @override(check_signature=False)
+    # @override(check_signature=False)
     def forward(self,
                 embeddings: Tensor,
                 labels: Tensor = None,
@@ -59,7 +59,7 @@ class FeedForwardClassifier(Model):
     def loss(self, logits: Tensor, target: Tensor, mask: Tensor) -> Tensor:
         return self.criterion(logits[mask], target[mask])
 
-    @override
+    # @override
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
         return {"Accuracy": self.metric.get_metric(reset)}
 
@@ -101,7 +101,7 @@ class LemmaClassifier(FeedForwardClassifier):
             assert(topk is None)
         self.topk = topk
 
-    @override
+    # @override
     def forward(self,
                 embeddings: Tensor,
                 labels: Tensor = None,

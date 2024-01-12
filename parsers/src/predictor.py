@@ -1,6 +1,6 @@
 from conllu.models import Token, TokenList
 
-from overrides import override
+# from overrides import override
 from typing import Dict
 
 from allennlp.predictors.predictor import Predictor
@@ -14,7 +14,7 @@ class MorphoSyntaxSemanticPredictor(Predictor):
     See https://guide.allennlp.org/training-and-prediction#4 for guidance.
     """
 
-    @override(check_signature=False)
+    # @override(check_signature=False)
     def dump_line(self, output: Dict[str, list]) -> str:
         metadata = output["metadata"]
 

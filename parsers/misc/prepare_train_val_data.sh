@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
 
 mkdir ../data
-./train_val_split.py ../../train.conllu ../data/train.conllu ../data/val.conllu 0.8
+./preprocessing.py ../data/dataset.conllu ../data/dataset_processed.conllu
+./train_val_split.py ../data/dataset_processed.conllu ../data/train.conllu ../data/val.conllu 0.8

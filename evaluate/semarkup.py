@@ -16,9 +16,38 @@ SEMARKUP_FIELDS = [
     "feats",
     "head",
     "deprel",
+    "deps",
+    "misc",
     "semslot",
     "semclass"
 ]
+
+
+def parse_deps(value: str) -> dict:
+    """
+    Example:
+    >>> parse_deps("26:conj|26:nmod:on|18:advcl:while")
+    {'26': ['conj', 'nmod:on'], '18': ['advcl:while']}
+    """
+
+    if value == '_':
+        return dict()
+
+    deps = {}
+    for dep in value.split('|'):
+        head, rel = dep.split(':', 1)
+        if head not in deps:
+            deps[head] = []
+        deps[head].append(rel)
+    return deps
+
+
+FIELD_CUSTOM_PARSERS = {
+    # not parse_int_value, as in https://github.com/EmilStenstrom/conllu/blob/master/conllu/parser.py
+    # "head": lambda line, i: line[i], # conllu.parser.parse_id_value(line[i]),
+    "deps": lambda line, i: parse_deps(line[i]),
+    "misc": lambda line, i: line[i]
+}
 
 
 class SemarkupToken:
@@ -27,11 +56,12 @@ class SemarkupToken:
         self.form = conllu_token["form"]
         self.lemma = conllu_token["lemma"]
         self.upos = conllu_token["upos"]
-        self.pos = conllu_token["upos"] # ALIAS
         self.xpos = conllu_token["xpos"]
         self.feats = conllu_token["feats"] if conllu_token["feats"] is not None else {}
         self.head = conllu_token["head"]
         self.deprel = conllu_token["deprel"]
+        self.deps = conllu_token["deps"]
+        self.misc = conllu_token["misc"]
         self.semslot = conllu_token["semslot"]
         self.semclass = conllu_token["semclass"]
 
@@ -48,7 +78,20 @@ class Sentence:
         return len(self.sentence)
 
     def serialize(self) -> str:
-        return self.sentence.serialize()
+        sentence_copy = deepcopy(self.sentence)
+        # Manually serialize deps tag.
+        for token in sentence_copy:
+            if not token["deps"]:
+                # If deps is empty, assign _.
+                token["deps"] = '_'
+                continue
+
+            dep_str_list = []
+            for head, rels in token["deps"].items():
+                for rel in rels:
+                    dep_str_list.append(f"{head}:{rel}")
+            token["deps"] = '|'.join(dep_str_list)
+        return sentence_copy.serialize()
 
 
 class SentenceIterator(collections.abc.Iterator):
@@ -58,16 +101,15 @@ class SentenceIterator(collections.abc.Iterator):
     def __next__(self) -> Sentence:
         return Sentence(next(self.conllu_sentences))
 
-
-def parse_semarkup(file: TextIO, incr: bool) -> Union[SentenceIterator, List[SemarkupToken]]:
+def parse_semarkup(file: TextIO, incr: bool) -> Union[SentenceIterator, List[TokenList]]:
     assert not file.closed
 
     if incr:
         # Return SentenceIterator
-        sentences = SentenceIterator(conllu.parse_incr(file, fields=SEMARKUP_FIELDS))
+        sentences = SentenceIterator(conllu.parse_incr(file, fields=SEMARKUP_FIELDS, field_parsers=FIELD_CUSTOM_PARSERS))
     else:
         # Return list
-        sentences = conllu.parse(file.read(), fields=SEMARKUP_FIELDS)
+        sentences = conllu.parse(file.read(), fields=SEMARKUP_FIELDS, field_parsers=FIELD_CUSTOM_PARSERS)
 
     return sentences
 
@@ -79,7 +121,7 @@ def write_semarkup(file_path: str, sentences: List[TokenList]) -> None:
         for token in sentence_filtered:
             for extra_tag in set(token.keys()) - set(SEMARKUP_FIELDS):
                 token.pop(extra_tag)
-        sentences_serialized.append(sentence_filtered.serialize())
+        sentences_serialized.append(Sentence(sentence_filtered).serialize())
     with open(file_path, 'w') as file:
         file.write(''.join(sentences_serialized))
 

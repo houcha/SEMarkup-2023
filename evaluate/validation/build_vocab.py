@@ -22,6 +22,8 @@ def build_vocab(sentences: Iterable[TokenList]) -> dict:
     feats = dict()
     heads = set()
     deprels = set()
+    deps = set()
+    misc = set()
     semslots = set()
     semclasses = set()
 
@@ -35,6 +37,10 @@ def build_vocab(sentences: Iterable[TokenList]) -> dict:
                 feats[cat].add(gram)
             heads.add(token.head if token.head is not None else '_')
             deprels.add(token.deprel if token.deprel is not None else '_')
+            for head, rels in token.deps.items():
+                for rel in rels:
+                    deps.add(rel)
+            misc.add(token.misc)
             semslots.add(token.semslot if token.semslot is not None else '_')
             semclasses.add(token.semclass if token.semclass is not None else '_')
 
@@ -43,13 +49,15 @@ def build_vocab(sentences: Iterable[TokenList]) -> dict:
         feats[cat] = list(grams)
 
     vocab = {
-        "upos": list(upos),
-        "xpos": list(xpos),
+        "upos": sorted(list(upos)),
+        "xpos": sorted(list(xpos)),
         "feats": feats,
         "heads": list(heads),
-        "deprels": list(deprels),
-        "semslots": list(semslots),
-        "semclasses": list(semclasses),
+        "deprels": sorted(list(deprels)),
+        "deps": sorted(list(deps)),
+        "misc": sorted(list(misc)),
+        "semslots": sorted(list(semslots)),
+        "semclasses": sorted(list(semclasses)),
     }
     return vocab
 

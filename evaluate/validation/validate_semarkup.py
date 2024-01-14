@@ -14,11 +14,9 @@ IS_VALID = True
 
 
 def expect(condition: bool, message: str, sentence: Sentence) -> None:
-    global IS_VALID
     if not condition:
         print(f"Error: {message}")
         print(f"Sentence:\n{sentence.serialize()}")
-        IS_VALID = False
 
 
 def load_dict_from_json(json_file_path: str) -> Dict:
@@ -27,7 +25,28 @@ def load_dict_from_json(json_file_path: str) -> Dict:
     return data
 
 
-def validate_semarkup(sentences: Iterable[Sentence], vocab_file: str = None) -> None:
+def is_int(s: str):
+    try:
+        int(s)
+    except ValueError:
+        return False
+    except TypeError:
+        return False
+    else:
+        return True
+
+def is_null(s: str):
+    try:
+        x, y = s.split('.')
+        if y != '1':
+            return False
+    except ValueError:
+        return False
+    else:
+        return True
+
+
+def validate_semarkup(sentences: Iterable[Sentence], vocab_file: str = None) -> bool:
     if vocab_file is not None:
         vocab = load_dict_from_json(vocab_file)
         vocab["upos"] = set(vocab["upos"])
@@ -39,74 +58,102 @@ def validate_semarkup(sentences: Iterable[Sentence], vocab_file: str = None) -> 
         vocab["semslots"] = set(vocab["semslots"])
         vocab["semclasses"] = set(vocab["semclasses"])
 
+    is_valid = True
+
     for sentence in tqdm(sentences):
-        roots_count = 0
+        try:
+            sentence_all_ids = set()
+            sentence_natural_ids = set() # without #NULL
+            sentence_heads = set()
+            sentence_deps_heads = set()
+            roots_count = 0
+            
+            for token in sentence:
+                sentence_all_ids.add(token.id)
+                if is_int(token.id):
+                    sentence_natural_ids.add(int(token.id))
 
-        for token in sentence:
-            # UPOS
-            if vocab_file is not None:
-                expect(
-                    token.upos in vocab["upos"],
-                    f"UPOS {token.upos} is out of vocabulary.", sentence
-                )
-            # XPOS
-            expect(
-                token.xpos is None,
-                f"XPOS is not _.", sentence
-            )
-            # Feats
-            if vocab_file is not None:
-                for cat, gram in token.feats.items():
-                    expect(
-                        cat in vocab["feats"],
-                        f"grammatical category {cat} is out of vocabulary.", sentence
-                    )
-                    expect(
-                        gram in vocab["feats"][cat],
-                        f"grammeme {gram} is out of vocabulary.", sentence
-                    )
-            # Head
-            expect(
-                token.head is None or type(token.head) is int,
-                f"Head must be either _ or integer.", sentence
-            )
-            if type(token.head) is int:
-                expect(
-                    0 <= token.head,
-                    "Head must be non-negative.", sentence,
-                )
-                expect(
-                    token.head <= len(sentence),
-                    "Head must not exceed sentence length.", sentence,
-                )
-                if token.head == 0:
-                    roots_count += 1
-            # Semslot
-            if vocab_file is not None:
-                expect(
-                    token.semslot in vocab["semslots"],
-                    f"Semslot {token.semslot} is out of vocabulary.", sentence
-                )
-            # Semclass
-            if vocab_file is not None:
-                expect(
-                    token.semclass in vocab["semclasses"],
-                    f"Semclass {token.semclass} is out of vocabulary.", sentence
-                )
+                # Null validation
+                if "#null" in token.form.lower():
+                    assert token.form == "#NULL", f"Did you mean #NULL?: {token.form}"
+                    assert token.head is None, f"Null's head = {token.head} != _"
+                    assert token.deprel == '_', f"Null's deprel = {token.deprel} != _"
+                    assert len(token.deps) == 0, f"Null's deps = {token.deps} != _"
+                    assert token.misc == 'ellipsis', f"Null's misc != ellipsis"
+                else:
+                    # Non-null tokens must have non-empty head.
+                    assert token.head is not None, f"Token: {token.form} has head = {token.head} != '_'"
 
-        expect(
-            roots_count,
-            "There must be one ROOT (head=0) in a sentence.", sentence,
-        )
+                # UPOS
+                if vocab_file is not None:
+                    assert token.upos in vocab["upos"], \
+                        f"UPOS {token.upos} is out of vocabulary."
+
+                # XPOS
+                if vocab_file is not None:
+                    assert token.xpos is None or token.xpos in vocab["xpos"], \
+                        f"XPOS {token.xpos} is out of vocabulary."
+
+                # Feats
+                if vocab_file is not None:
+                    for cat, gram in token.feats.items():
+                        assert cat in vocab["feats"], \
+                            f"grammatical category {cat} is out of vocabulary."
+                        assert gram in vocab["feats"][cat], \
+                            f"grammeme {gram} is out of vocabulary."
+                # Head
+                assert token.head is None or type(token.head) is int, \
+                    f"Head must be either _ or integer."
+                if type(token.head) is int:
+                    # FIXME <= len(sentence), \
+                    assert 0 <= token.head, \
+                        f"Head must be non-negative. Encountered {token.head}"
+                    if token.head == 0:
+                        roots_count += 1
+                    sentence_heads.add(token.head)
+
+                # Deps
+                for head, rels in token.deps.items():
+                    assert is_int(head) or is_null(head), \
+                        f"Deps head must be either int or null (x.1). Encountered: {head}"
+                    # FIXME: <= len(sentence) + 1 # +1, since #NULL may be at the end of a sentence.
+                    assert 0 <= float(head), \
+                        f"Deps head must be non-negative. Encountered: {head}"
+                    sentence_deps_heads.add(head)
+
+                # Semslot
+                if vocab_file is not None:
+                    assert token.semslot in vocab["semslots"], \
+                        f"Semslot {token.semslot} is out of vocabulary."
+
+                # Semclass
+                if vocab_file is not None:
+                    assert token.semclass in vocab["semclasses"], \
+                        f"Semclass {token.semclass} is out of vocabulary."
+
+            ids_diff = set(range(min(sentence_natural_ids), max(sentence_natural_ids))) - sentence_natural_ids
+            assert not ids_diff, f"Sentence ids are non-continuous, absent ids: {ids_diff}"
+            head_ids_diff = sentence_heads - sentence_natural_ids - {0}
+            assert not head_ids_diff, f"Heads' ids are not consistent with ids, extra ids: {head_ids_diff}"
+            deps_head_ids_diff = sentence_deps_heads - sentence_all_ids - {0}
+            assert not head_ids_diff, f"Deps heads' ids are not consistent with ids, extra ids: {deps_head_ids_diff}"
+            assert roots_count == 1, "There must be one ROOT (head=0) in a sentence."
+
+        except AssertionError as e:
+            print(f"Error: {e}")
+            print(f"Sentence:\n{sentence.serialize()}")
+            is_valid = False
+
+    return is_valid
 
 
 def main(semarkup_file_path: str, vocab_file: str) -> None:
     print(f"Load sentences...")
     with open(semarkup_file_path, "r", encoding='utf8') as semarkup_file:
         sentences = parse_semarkup(semarkup_file, incr=True)
-        validate_semarkup(sentences, vocab_file)
-        if IS_VALID:
+        if validate_semarkup(sentences, vocab_file):
             print("Seems legit!")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='SEMarkup sanity check.')

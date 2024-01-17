@@ -8,12 +8,13 @@ from torch import Tensor
 from allennlp.nn.util import get_text_field_mask
 from allennlp.common import Lazy
 from allennlp.data import TextFieldTensors
+from allennlp.data.fields import TensorField
 from allennlp.data.vocabulary import Vocabulary, DEFAULT_OOV_TOKEN
 from allennlp.models import Model
 from allennlp.modules.token_embedders.token_embedder import TokenEmbedder
 
 from .feedforward_classifier import FeedForwardClassifier, LemmaClassifier
-from .dependency_classifier import DependencyClassifier
+from .dependency_classifier import DependencyClassifier, ExtendedDependencyClassifier
 from .lemmatize_helper import LemmaRule, predict_lemma_from_rule
 
 
@@ -27,14 +28,16 @@ class MorphoSyntaxSemanticParser(Model):
     # See https://guide.allennlp.org/using-config-files to find more about Lazy.
     #
     # TODO: move Lazy to from_lazy_objects (as here https://guide.allennlp.org/using-config-files#4)
-    def __init__(self,
-                 vocab: Vocabulary,
-                 embedder: TokenEmbedder,
-                 lemma_rule_classifier: Lazy[LemmaClassifier],
-                 pos_feats_classifier: Lazy[FeedForwardClassifier],
-                 depencency_classifier: Lazy[DependencyClassifier],
-                 semslot_classifier: Lazy[FeedForwardClassifier],
-                 semclass_classifier: Lazy[FeedForwardClassifier]):
+    def __init__(
+        self,
+        vocab: Vocabulary,
+        embedder: TokenEmbedder,
+        lemma_rule_classifier: Lazy[LemmaClassifier],
+        pos_feats_classifier: Lazy[FeedForwardClassifier],
+        depencency_classifier: Lazy[DependencyClassifier],
+        semslot_classifier: Lazy[FeedForwardClassifier],
+        semclass_classifier: Lazy[FeedForwardClassifier]
+    ):
         super().__init__(vocab)
 
         self.embedder = embedder
@@ -62,16 +65,18 @@ class MorphoSyntaxSemanticParser(Model):
         )
 
     # @override(check_signature=False)
-    def forward(self,
-                words: TextFieldTensors,
-                lemma_rule_labels: Tensor = None,
-                pos_feats_labels: Tensor = None,
-                head_labels: Tensor = None,
-                deprel_labels: Tensor = None,
-                semslot_labels: Tensor = None,
-                semclass_labels: Tensor = None,
-                metadata: Dict = None
-                ) -> Dict[str, Tensor]:
+    def forward(
+        self,
+        words: TextFieldTensors,
+        null_mask: TensorField,
+        lemma_rule_labels: Tensor = None,
+        pos_feats_labels: Tensor = None,
+        head_labels: Tensor = None,
+        deprel_labels: Tensor = None,
+        semslot_labels: Tensor = None,
+        semclass_labels: Tensor = None,
+        metadata: Dict = None
+    ) -> Dict[str, Tensor]:
 
         # [batch_size, seq_len, embedding_dim]
         embeddings = self.embedder(**words['tokens'])
@@ -137,7 +142,7 @@ class MorphoSyntaxSemanticParser(Model):
     # @override(check_signature=False)
     def make_output_human_readable(self, output: Dict[str, Tensor]) -> Dict[str, list]:
         sentences = output["metadata"]
-        # Make sure batch_size is 1 during prediction.
+        # Make sure batch_size is 1 during prediction, because 
         assert len(sentences) == 1
         sentence = sentences[0]
         metadata = sentence.metadata
@@ -166,16 +171,18 @@ class MorphoSyntaxSemanticParser(Model):
             lemmas.append(lemma)
 
         # Restore "glued" pos and feats tags.
-        pos_tags = []
+        upos_tags = []
+        xpos_tags = []
         feats_tags = []
         pos_feats_preds = output["pos_feats_preds"].tolist()[0]
         for pos_feats_pred in pos_feats_preds:
             pos_feats_str = self.vocab.get_token_from_index(pos_feats_pred, "pos_feats_labels")
             if pos_feats_str == DEFAULT_OOV_TOKEN:
-                pos_tag, feats_tag = '_', '_'
+                upos_tag, xpos_tag, feats_tag = '_', '_', '_'
             else:
-                pos_tag, feats_tag = pos_feats_str.split('#')
-            pos_tags.append(pos_tag)
+                upos_tag, xpos_tag, feats_tag = pos_feats_str.split('#')
+            upos_tags.append(upos_tag)
+            xpos_tags.append(xpos_tag)
             feats_tags.append(feats_tag)
 
         # Restore heads.
@@ -214,7 +221,8 @@ class MorphoSyntaxSemanticParser(Model):
             "ids": [ids],
             "forms": [forms],
             "lemmas": [lemmas],
-            "pos": [pos_tags],
+            "upos": [upos_tags],
+            "xpos": [xpos_tags],
             "feats": [feats_tags],
             "heads": [heads],
             "deprels": [deprels],

@@ -3,6 +3,7 @@
 import sys
 import json
 import argparse
+from copy import deepcopy
 from conllu.models import TokenList, Token
 
 from tqdm import tqdm
@@ -20,6 +21,15 @@ def preprocess(sentences: List[TokenList]) -> List[str]:
         for token in sentence:
             if type(token["id"]) is tuple and '-' in token["id"]:
                 continue
+            deps = deepcopy(token["deps"])
+            token["deps"] = dict()
+            for head, rels in deps.items():
+                try:
+                    a, b = head.split('-')
+                    head = a
+                except:
+                    pass
+                token["deps"][head] = rels
             tokens.append(token)
 
         preprocessed_sentence = Sentence(TokenList(tokens, sentence.metadata))

@@ -1,4 +1,5 @@
 from typing import Iterable, List, Dict, Optional
+from copy import deepcopy
 
 import conllu
 import torch
@@ -27,17 +28,10 @@ class Sentence:
     """
 
     def __init__(self, tokens: conllu.models.TokenList):
-        simple_tokens = []
-        null_tokens = []
-        for token in tokens:
-            if is_null(token):
-                null_tokens.append(token)
-                continue
-            simple_tokens.append(token)
-        # Move null tokens to the end of the sentence: [<token1>, ..., <tokenN>, <null1>, ..., <nullK>].
-        self._tokens = conllu.models.TokenList(simple_tokens + null_tokens, metadata=tokens.metadata)
+        self._tokens = deepcopy(tokens)
+        Sentence._renumerate_tokens(self._tokens)
         # Cache mask.
-        self._null_mask = [is_null(token) for token in self._tokens]
+        self._null_mask = [is_null(token) for token in tokens]
 
     def _collect_field(self, field_type: str) -> Optional[List]:
         field_values = [token[field_type] for token in self._tokens]
@@ -46,6 +40,36 @@ class Sentence:
         if all(field is None for field in field_values):
             return None
         return field_values
+
+    @staticmethod
+    def _renumerate_tokens(tokens: conllu.models.TokenList):
+        """
+        Renumerate tokens, so that #NULLs get integer id (e.g. [1, 1.1, 2] turns into [1, 2, 3]).
+        This also renumerates 'head' and 'deps' tags accordingly.
+        Works inplace.
+        """
+        #print(tokens.metadata)
+        old2new_id = {'0': 0} # 0 to accont for root.
+
+        # Change ids.
+        for i, token in enumerate(tokens, 1):
+            old_id = token["id"]
+            old2new_id[old_id] = i
+            token["id"] = i
+
+        #print(f'old2new_id: {old2new_id}')
+        # Change heads and deps.
+        try:
+            for token in tokens:
+                if token["head"] is not None:
+                    token["head"] = old2new_id[str(token["head"])]
+                new_deps = {}
+                #print(f'token["deps"]: {token["deps"]}')
+                for head, rels in token["deps"].items():
+                    new_deps[old2new_id[head]] = rels
+                token["deps"] = new_deps
+        except Exception as e:
+            print(tokens.metadata["sent_id"], e)
 
     @property
     def null_mask(self) -> List[bool]:
@@ -78,8 +102,13 @@ class Sentence:
     @property
     def heads(self) -> Optional[List[int]]:
         heads = self._collect_field("head")
+        # Replace Nones with -1.
+        if heads is not None:
+            heads = [-1 if head is None else head for head in heads]
+        return heads
+        #heads = self._collect_field("head")
         # Replace nulls' heads with HEAD_NULL_TOKEN_ID, since they don't take part in basic UD.
-        return [HEAD_NULL_TOKEN_ID if is_null else head for head, is_null in zip(heads, self.null_mask)]
+        #return [HEAD_NULL_TOKEN_ID if is_null else head for head, is_null in zip(heads, self.null_mask)]
 
     @property
     def deprels(self) -> Optional[List[str]]:
@@ -106,6 +135,27 @@ class Sentence:
         return self._tokens
 
 
+# TODO: move to utils
+def parse_deps(value: str) -> dict:
+    """
+    Example:
+    >>> parse_deps("26:conj|26:nmod:on|18:advcl:while")
+    {'26': ['conj', 'nmod:on'], '18': ['advcl:while']}
+    """
+
+    if value == '_':
+        return dict()
+
+    deps = {}
+    for dep in value.split('|'):
+        head, rel = dep.split(':', 1)
+
+        if head not in deps:
+            deps[head] = []
+        deps[head].append(rel)
+    return deps
+
+
 @DatasetReader.register("compreno_ud_dataset_reader")
 class ComprenoUDDatasetReader(DatasetReader):
     """
@@ -124,10 +174,11 @@ class ComprenoUDDatasetReader(DatasetReader):
             texts,
             fields=["id", "form", "lemma", "upos", "xpos", "feats", "head", "deprel", "deps", "misc", "semslot", "semclass"],
             field_parsers={
+                "id": lambda line, i: line[i], # Do not split indexes like 1.1
                 "upos": lambda line, i: line[i], # Do not treat _ as None
                 "xpos": lambda line, i: line[i], # Do not treat _ as None
                 "feats": lambda line, i: line[i],
-                "deps": lambda line, i: line[i],
+                "deps": lambda line, i: parse_deps(line[i]),
                 "misc": lambda line, i: line[i],
             }
         )
@@ -161,12 +212,13 @@ class ComprenoUDDatasetReader(DatasetReader):
         semclasses: List[str] = None,
         metadata: Dict = None,
     ) -> Instance:
+        # TODO: exclude NULLs' tags from vocabulary.
 
         text_field = TextField(list(map(Token, words)), self.token_indexers)
 
         fields = {}
         fields['words'] = text_field
-        fields['null_mask'] = TensorField(torch.BoolTensor(null_mask), padding_value=True)
+        fields['null_mask'] = TensorField(torch.BoolTensor(null_mask), padding_value=False)
 
         if lemmas is not None:
             lemma_rules = [str(predict_lemma_rule(word, lemma)) for word, lemma in zip(words, lemmas)]

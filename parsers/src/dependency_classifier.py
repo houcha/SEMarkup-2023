@@ -31,13 +31,15 @@ class DependencyClassifier(Model):
     It might be not 100% correct, but it does its job.
     """
 
-    def __init__(self,
-                 vocab: Vocabulary,
-                 in_dim: int, # = embedding dim
-                 hid_dim: int,
-                 n_rel_classes: int,
-                 activation: str,
-                 dropout: float):
+    def __init__(
+        self,
+        vocab: Vocabulary,
+        in_dim: int, #= embedding_dim
+        hid_dim: int,
+        n_rel_classes: int,
+        activation: str,
+        dropout: float
+    ):
         super().__init__(vocab)
 
         mlp = nn.Sequential(
@@ -57,12 +59,13 @@ class DependencyClassifier(Model):
         self.criterion = nn.CrossEntropyLoss()
         self.metric = AttachmentScores()
 
-    def forward(self,
-                embeddings: Tensor, # [batch_size, seq_len, embedding_dim]
-                arc_labels: Tensor, # [batch_size, seq_len]
-                rel_labels: Tensor, # [batch_size, seq_len]
-                mask: Tensor        # [batch_size, seq_len]
-                ) -> Dict[str, Tensor]:
+    def forward(
+        self,
+        embeddings: Tensor, # [batch_size, seq_len, embedding_dim]
+        arc_labels: Tensor, # [batch_size, seq_len]
+        rel_labels: Tensor, # [batch_size, seq_len]
+        mask: Tensor        # [batch_size, seq_len]
+    ) -> Dict[str, Tensor]:
 
         # [batch_size, seq_len, hid_dim]
         h_arc_head = self.arc_head_mlp(embeddings)
@@ -72,8 +75,9 @@ class DependencyClassifier(Model):
 
         # [batch_size, seq_len, seq_len]
         s_arc = self.arc_attention(h_arc_head, h_arc_dep)
-        # Replace masked values along the 3rd dimension with -inf.
-        s_arc = replace_masked_values(s_arc, mask[:, None, :], replace_with=-float("inf"))
+        # Mask values with -inf (symmetrically),
+        # I.e. if mask[i, j] = 0, then s_arc[i, :, j] = -inf and s_arc[i, j, :] = -inf.
+        s_arc = replace_masked_values(s_arc, mask[:, None, :] * mask[:, :, None], replace_with=-float("inf"))
         # [batch_size, seq_len, seq_len, num_labels]
         s_rel = self.rel_attention(h_rel_head, h_rel_dep).permute(0, 2, 3, 1)
 
@@ -98,21 +102,23 @@ class DependencyClassifier(Model):
             'rel_loss': rel_loss
         }
 
-    def decode(self,
-               s_arc: Tensor, # [batch_size, seq_len, seq_len]
-               s_rel: Tensor, # [batch_size, seq_len, seq_len, num_labels]
-               mask: Tensor   # [batch_size, seq_len]
-               ) -> Tuple[Tensor, Tensor]:
+    def decode(
+        self,
+        s_arc: Tensor, # [batch_size, seq_len, seq_len]
+        s_rel: Tensor, # [batch_size, seq_len, seq_len, num_labels]
+        mask: Tensor   # [batch_size, seq_len]
+    ) -> Tuple[Tensor, Tensor]:
 
         if self.training:
             return self.greedy_decode(s_arc, s_rel)
         else:
             return self.mst_decode(s_arc, s_rel, mask)
 
-    def greedy_decode(self,
-                      s_arc: Tensor, # [batch_size, seq_len, seq_len]
-                      s_rel: Tensor, # [batch_size, seq_len, seq_len, num_labels]
-                      ) -> Tuple[Tensor, Tensor]:
+    def greedy_decode(
+        self,
+        s_arc: Tensor, # [batch_size, seq_len, seq_len]
+        s_rel: Tensor, # [batch_size, seq_len, seq_len, num_labels]
+    ) -> Tuple[Tensor, Tensor]:
 
         batch_size, _, _ = s_arc.shape
 
@@ -130,11 +136,13 @@ class DependencyClassifier(Model):
 
         return predicted_arcs, predicted_rels
 
-    def mst_decode(self,
-                   s_arc: Tensor, # [batch_size, seq_len, seq_len]
-                   s_rel: Tensor, # [batch_size, seq_len, seq_len, num_labels]
-                   mask: Tensor   # [batch_size, seq_len]
-                   ) -> Tuple[Tensor, Tensor]:
+    def mst_decode(
+        self,
+        s_arc: Tensor, # [batch_size, seq_len, seq_len]
+        s_rel: Tensor, # [batch_size, seq_len, seq_len, num_labels]
+        mask: Tensor   # [batch_size, seq_len]
+    ) -> Tuple[Tensor, Tensor]:
+
         batch_size, seq_len, _ = s_arc.shape
 
         assert get_device_of(s_arc) == get_device_of(s_rel)
@@ -171,7 +179,7 @@ class DependencyClassifier(Model):
         #
         # However, decode_mst can produce a tree where root node
         # has a parent, since it knows nothing about root yet.
-        # That is, we have to chose the latter explicitly.
+        # That is, we have to choose the latter explicitly.
         # [batch_size]
         root_idxs = s_arc_probs_inv.diagonal(dim1=1, dim2=2).argmax(dim=-1)
 
@@ -203,13 +211,14 @@ class DependencyClassifier(Model):
 
         return predicted_arcs, predicted_rels
 
-    def loss(self,
-             s_arc: Tensor,       # [batch_size, seq_len, seq_len]
-             s_rel: Tensor,       # [batch_size, seq_len, seq_len, num_labels]
-             target_arcs: Tensor, # [batch_size, seq_len]
-             target_rels: Tensor, # [batch_size, seq_len]
-             mask: Tensor         # [batch_size, seq_len]
-             ) -> Tuple[Tensor, Tensor]:
+    def loss(
+        self,
+        s_arc: Tensor,       # [batch_size, seq_len, seq_len]
+        s_rel: Tensor,       # [batch_size, seq_len, seq_len, num_labels]
+        target_arcs: Tensor, # [batch_size, seq_len]
+        target_rels: Tensor, # [batch_size, seq_len]
+        mask: Tensor         # [batch_size, seq_len]
+    ) -> Tuple[Tensor, Tensor]:
 
         # [mask.sum(), seq_len]
         s_arc = s_arc[mask]
@@ -227,6 +236,8 @@ class DependencyClassifier(Model):
         arc_loss = self.criterion(s_arc, target_arcs)
         rel_loss = self.criterion(s_rel, target_rels)
 
+        assert arc_loss != float("inf")
+        assert rel_loss != float("inf")
         return arc_loss, rel_loss
 
     # @override

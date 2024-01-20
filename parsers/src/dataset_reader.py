@@ -10,9 +10,7 @@ from allennlp.data.token_indexers import SingleIdTokenIndexer, TokenIndexer
 from allennlp.data.tokenizers import Token
 
 from .lemmatize_helper import predict_lemma_rule
-
-
-HEAD_NULL_TOKEN_ID = -1
+from .multilabel_adjacency_field import MultilabelAdjacencyField
 
 
 def is_null(token: Token) -> bool:
@@ -48,8 +46,7 @@ class Sentence:
         This also renumerates 'head' and 'deps' tags accordingly.
         Works inplace.
         """
-        #print(tokens.metadata)
-        old2new_id = {'0': 0} # 0 to accont for root.
+        old2new_id = {'0': 0} # 0 accounts for ROOT head.
 
         # Change ids.
         for i, token in enumerate(tokens, 1):
@@ -57,19 +54,14 @@ class Sentence:
             old2new_id[old_id] = i
             token["id"] = i
 
-        #print(f'old2new_id: {old2new_id}')
         # Change heads and deps.
-        try:
-            for token in tokens:
-                if token["head"] is not None:
-                    token["head"] = old2new_id[str(token["head"])]
-                new_deps = {}
-                #print(f'token["deps"]: {token["deps"]}')
-                for head, rels in token["deps"].items():
-                    new_deps[old2new_id[head]] = rels
-                token["deps"] = new_deps
-        except Exception as e:
-            print(tokens.metadata["sent_id"], e)
+        for i, token in enumerate(tokens, 1):
+            if token["head"] is not None:
+                token["head"] = old2new_id[str(token["head"])]
+            new_deps = {}
+            for head, rels in token["deps"].items():
+                new_deps[old2new_id[head]] = rels
+            token["deps"] = new_deps
 
     @property
     def null_mask(self) -> List[bool]:
@@ -106,9 +98,6 @@ class Sentence:
         if heads is not None:
             heads = [-1 if head is None else head for head in heads]
         return heads
-        #heads = self._collect_field("head")
-        # Replace nulls' heads with HEAD_NULL_TOKEN_ID, since they don't take part in basic UD.
-        #return [HEAD_NULL_TOKEN_ID if is_null else head for head, is_null in zip(heads, self.null_mask)]
 
     @property
     def deprels(self) -> Optional[List[str]]:
@@ -193,6 +182,8 @@ class ComprenoUDDatasetReader(DatasetReader):
                 sentence.feats,
                 sentence.heads,
                 sentence.deprels,
+                sentence.deps,
+                sentence.miscs,
                 sentence.semslots,
                 sentence.semclasses,
                 sentence.metadata,
@@ -208,6 +199,8 @@ class ComprenoUDDatasetReader(DatasetReader):
         feats_tags: List[str] = None,
         heads: List[int] = None,
         deprels: List[str] = None,
+        deps: List[Dict[int, List[str]]] = None,
+        miscs: List[str] = None,
         semslots: List[str] = None,
         semclasses: List[str] = None,
         metadata: Dict = None,
@@ -236,6 +229,29 @@ class ComprenoUDDatasetReader(DatasetReader):
 
         if deprels is not None:
             fields['deprel_labels'] = SequenceLabelField(deprels, text_field, 'deprel_labels')
+
+        if deps is not None:
+            edges = []
+            edges_labels = []
+            for index, token_deps in enumerate(deps):
+                for head, head_relations in token_deps.items():
+                    assert 0 <= head
+                    # Hack: start indexing at 0 and replace ROOT with self-loop.
+                    # It makes parser implementation much easier.
+                    if head == 0:
+                        # Replace ROOT with self-loop.
+                        head = index
+                    else:
+                        # If not ROOT, shift token left.
+                        head -= 1
+                        assert head != index, f"head = {head + 1} must not be equal to index = {index + 1}"
+                    edge = (head, index)
+                    edges.append(edge)
+                    edges_labels.append(head_relations)
+            fields['deps_labels'] = MultilabelAdjacencyField(edges, text_field, edges_labels, 'deps_labels')
+
+        if miscs is not None:
+            fields['misc_labels'] = SequenceLabelField(miscs, text_field, 'misc_labels')
 
         if semslots is not None:
             fields['semslot_labels'] = SequenceLabelField(semslots, text_field, 'semslot_labels')

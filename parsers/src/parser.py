@@ -3,6 +3,8 @@
 from typing import Dict
 
 import numpy as np
+
+import torch
 from torch import Tensor
 
 from allennlp.nn.util import get_text_field_mask
@@ -73,6 +75,8 @@ class MorphoSyntaxSemanticParser(Model):
         pos_feats_labels: Tensor = None,
         head_labels: Tensor = None,
         deprel_labels: Tensor = None,
+        deps_labels: Tensor = None,
+        misc_labels: Tensor = None,
         semslot_labels: Tensor = None,
         semclass_labels: Tensor = None,
         metadata: Dict = None
@@ -81,20 +85,24 @@ class MorphoSyntaxSemanticParser(Model):
         # [batch_size, seq_len, embedding_dim]
         embeddings = self.embedder(**words['tokens'])
         # [batch_size, seq_len]
-        mask = get_text_field_mask(words) & (~null_mask)
+        mask = get_text_field_mask(words)
+        # Mask with nulls excluded.
+        no_null_mask = (~null_mask)
 
-        lemma_rule = self.lemma_rule_classifier(embeddings, lemma_rule_labels, mask, metadata)
+        # Mask nulls, since they have trivial lemmas.
+        lemma_rule = self.lemma_rule_classifier(embeddings, lemma_rule_labels, mask & no_null_mask, metadata)
+        # Don't mask nulls, as they actually have non-trivial grammatical features we want to learn.
         pos_feats = self.pos_feats_classifier(embeddings, pos_feats_labels, mask)
-        syntax = self.dependency_classifier(embeddings, head_labels, deprel_labels, mask)
+        syntax = self.dependency_classifier(embeddings, head_labels, deprel_labels, mask & no_null_mask)
         semslot = self.semslot_classifier(embeddings, semslot_labels, mask)
         semclass = self.semclass_classifier(embeddings, semclass_labels, mask)
 
-        loss = lemma_rule['loss'] + \
-               pos_feats['loss'] + \
-               syntax['arc_loss'] + \
-               syntax['rel_loss'] + \
-               semslot['loss'] + \
-               semclass['loss']
+        loss = lemma_rule['loss'] \
+            + pos_feats['loss'] \
+            + syntax['arc_loss'] \
+            + syntax['rel_loss'] \
+            + semslot['loss'] \
+            + semclass['loss']
 
         return {
             'lemma_rule_preds': lemma_rule['preds'],

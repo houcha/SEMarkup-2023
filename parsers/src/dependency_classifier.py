@@ -8,14 +8,14 @@ import numpy as np
 
 import torch
 from torch import nn
-from torch import Tensor
+from torch import Tensor, BoolTensor, LongTensor
 import torch.nn.functional as F
 
 from allennlp.data import Vocabulary
 from allennlp.models import Model
 from allennlp.nn.activations import Activation
 from allennlp.modules.matrix_attention.bilinear_matrix_attention import BilinearMatrixAttention
-from allennlp.training.metrics import AttachmentScores
+from allennlp.training.metrics import Average, AttachmentScores
 from allennlp.nn.chu_liu_edmonds import decode_mst
 from allennlp.nn.util import replace_masked_values, get_range_vector, get_device_of, move_to_device
 
@@ -39,7 +39,6 @@ class DependencyClassifier(Model):
         n_rel_classes: int,
         activation: str,
         dropout: float,
-        target_padding_value: int = -1
     ):
         super().__init__(vocab)
 
@@ -57,19 +56,18 @@ class DependencyClassifier(Model):
         self.arc_attention = BilinearMatrixAttention(hid_dim, hid_dim, use_input_biases=False, label_dim=1)
         self.rel_attention = BilinearMatrixAttention(hid_dim, hid_dim, use_input_biases=True, label_dim=n_rel_classes)
 
-        self.target_padding_value = target_padding_value
-        self.criterion = nn.CrossEntropyLoss()
-        self.metric = AttachmentScores()
+        # Loss.
+        self.criterion = nn.BCEWithLogitsLoss(reduction='none')
+        # Metrics.
+        self.iou_arc = Average()
+        self.iou_rel = Average()
 
     def forward(
         self,
         embeddings: Tensor,    # [batch_size, seq_len, embedding_dim]
         deprel_labels: Tensor, # [batch_size, seq_len, seq_len, num_labels]
-        mask1d: Tensor         # [batch_size, seq_len]
+        mask: Tensor           # [batch_size, seq_len]
     ) -> Dict[str, Tensor]:
-        # Mirror mask, so that mask2d[:, i, j] = True iff mask1d[:, i] = mask1d[:, j] = True.
-        # [batch_size, seq_len, seq_len]
-        mask2d = mask1d[:, None, :] * mask1d[:, :, None]
 
         # [batch_size, seq_len, hid_dim]
         h_arc_head = self.arc_head_mlp(embeddings)
@@ -78,27 +76,27 @@ class DependencyClassifier(Model):
         h_rel_dep = self.rel_dep_mlp(embeddings)
 
         # [batch_size, seq_len, seq_len]
+        # s_arc[:, i, j] = Score of edge j -> i.
         s_arc = self.arc_attention(h_arc_head, h_arc_dep)
-        # Mask values with -inf (symmetrically),
-        s_arc = replace_masked_values(s_arc, mask2d, replace_with=-float("inf"))
+        # Mask undesirable values with -inf,
+        s_arc = replace_masked_values(s_arc, self._mirror_mask(mask), replace_with=-float("inf"))
         # [batch_size, seq_len, seq_len, num_labels]
         s_rel = self.rel_attention(h_rel_head, h_rel_dep).permute(0, 2, 3, 1)
 
-        predicted_arcs, predicted_rels = self.decode(s_arc, s_rel, mask1d)
+        pred_arcs, pred_rels = self.decode(s_arc, s_rel, mask)
 
         if deprel_labels is not None:
-            # Now both predicted_arcs and arc_labels have internal format.
-            arc_loss, rel_loss = self.loss(s_arc, s_rel, deprel_labels, mask2d)
-            self.calc_metric(predicted_arcs, predicted_rels, deprel_labels, mask2d)
+            arc_loss, rel_loss = self.loss(s_arc, s_rel, deprel_labels)
+            self.calc_metric(pred_arcs, pred_rels, deprel_labels)
         else:
             arc_loss, rel_loss = torch.tensor(0.), torch.tensor(0.)
 
         # Now both predicted_arcs and arc_labels have conllu format.
-        predicted_arcs = self._internal_to_conllu_arc_format(predicted_arcs)
+        #pred_arcs = self._internal_to_conllu_arc_format(pred_arcs)
 
         return {
-            'arc_preds': predicted_arcs,
-            'rel_preds': predicted_rels,
+            'arc_preds': pred_arcs,
+            'rel_preds': pred_rels,
             'arc_loss': arc_loss,
             'rel_loss': rel_loss
         }
@@ -110,10 +108,11 @@ class DependencyClassifier(Model):
         mask: Tensor   # [batch_size, seq_len]
     ) -> Tuple[Tensor, Tensor]:
 
-        if self.training:
-            return self.greedy_decode(s_arc, s_rel)
-        else:
-            return self.mst_decode(s_arc, s_rel, mask)
+        return self.greedy_decode(s_arc, s_rel)
+    #    if self.training:
+    #        return self.greedy_decode(s_arc, s_rel)
+    #    else:
+    #        return self.mst_decode(s_arc, s_rel, mask)
 
     def greedy_decode(
         self,
@@ -121,21 +120,16 @@ class DependencyClassifier(Model):
         s_rel: Tensor, # [batch_size, seq_len, seq_len, num_labels]
     ) -> Tuple[Tensor, Tensor]:
 
-        batch_size, _, _ = s_arc.shape
-
-        # Select the most probable arcs.
-        # [batch_size, seq_len]
-        predicted_arcs = s_arc.argmax(-1)
-
-        # Select the most probable rels for each arc.
+        # Select all probable arcs.
         # [batch_size, seq_len, seq_len]
-        predicted_rels = s_rel.argmax(-1)
+        pred_arcs = torch.sigmoid(s_arc).round().long()
 
+        # Select all probable rels for each arc.
+        # [batch_size, seq_len, seq_len, num_labels]
+        pred_rels = torch.sigmoid(s_rel).round().long()
         # Select rels towards predicted arcs.
-        # [batch_size, seq_len]
-        predicted_rels = predicted_rels.gather(-1, predicted_arcs[:, :, None]).squeeze(-1)
 
-        return predicted_arcs, predicted_rels
+        return pred_arcs, pred_rels
 
     def mst_decode(
         self,
@@ -218,48 +212,97 @@ class DependencyClassifier(Model):
         s_arc: Tensor,  # [batch_size, seq_len, seq_len]
         s_rel: Tensor,  # [batch_size, seq_len, seq_len, num_labels]
         target: Tensor, # [batch_size, seq_len, seq_len, num_labels]
-        mask: Tensor    # [batch_size, seq_len, seq_len]
     ) -> Tuple[Tensor, Tensor]:
 
-        max_values, labels = target.max(dim=-1)
+        # has_arc_mask[:, i, j] = True iff target has edge at index [i, j].
         # [batch_size, seq_len, seq_len]
-        # has_edge_mask[:, i, j] = True iff target has edge at index [i, j].
-        has_edge_mask = max_values != self.target_padding_value
-        # Check that all edges are contained within the mask.
-        assert torch.all((has_edge_mask & (~mask)) == False)
+        has_arc_mask = target.max(dim=-1).values != -1
+        # [batch_size, seq_len]
+        mask = torch.any(has_arc_mask == True, dim=-1)
+        # [batch_size, seq_len, seq_len]
+        mask2d = self._mirror_mask(mask)
 
         # [batch_size, seq_len]
-        has_head_mask = torch.any(has_edge_mask == True, dim=-1)
-
-        target_heads = max_values.argmax(dim=-1)
-        arc_loss = self.criterion(s_arc[has_head_mask], target_heads[has_head_mask])
-        rel_loss = self.criterion(s_rel[has_edge_mask], labels[has_edge_mask])
-
+        arc_losses = self.criterion(s_arc[mask], has_arc_mask[mask].float())
+        arc_loss = arc_losses[mask2d[mask]].mean()
         assert arc_loss != float("inf")
+
+        # [batch_size, seq_len]
+        rel_losses = self.criterion(s_rel[has_arc_mask], target[has_arc_mask].float())
+        rel_loss = rel_losses.mean()
         assert rel_loss != float("inf")
+
         return arc_loss, rel_loss
 
     def calc_metric(
         self,
-        predicted_arcs: Tensor,  # [batch_size, seq_len, seq_len]
-        predicted_rels: Tensor,  # [batch_size, seq_len, seq_len, num_labels]
-        target: Tensor,          # [batch_size, seq_len, seq_len, num_labels]
-        mask: Tensor             # [batch_size, seq_len, seq_len]
+        pred_arcs: LongTensor,  # [batch_size, seq_len, seq_len]
+        pred_rels: LongTensor,  # [batch_size, seq_len, seq_len, num_labels]
+        target: LongTensor,     # [batch_size, seq_len, seq_len, num_labels]
     ):
-        # Same as with loss.
-        max_values, labels = target.max(dim=-1)
-        has_edge_mask = max_values != self.target_padding_value
-        has_head_mask = torch.any(has_edge_mask == True, dim=-1)
-        target_heads = max_values.argmax(dim=-1)
-        target_rels = labels[has_edge_mask]
+        # TODO: replace -1 with 0 and simplify
 
-        self.metric(predicted_arcs[has_head_mask], predicted_rels[has_head_mask], target_heads[has_head_mask], target_rels)
+        # [batch_size, seq_len, seq_len]
+        has_arc_mask = target.max(dim=-1).values != -1
+        # [batch_size, seq_len]
+        mask = torch.any(has_arc_mask == True, dim=-1)
+        # [batch_size, seq_len, seq_len]
+        mask2d = self._mirror_mask(mask)
+        
+        # Kinda UAS
+        target_arcs_idxs = has_arc_mask.nonzero()
+        pred_arcs_idxs = pred_arcs.nonzero()
+        iou_arc_score = self._intersection_over_union_score(pred_arcs_idxs, target_arcs_idxs)
+        self.iou_arc(iou_arc_score)
+
+        # Kinda LAS
+        target_rels_idxs = (target * has_arc_mask[..., None]).nonzero()
+        pred_rels_idxs = (pred_rels * pred_arcs[..., None]).nonzero()
+        iou_rel_score = self._intersection_over_union_score(pred_rels_idxs, target_rels_idxs)
+        self.iou_rel(iou_rel_score)
 
     # @override
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
-        return self.metric.get_metric(reset)
+        iou_arc = self.iou_arc.get_metric(reset)
+        iou_rel = self.iou_rel.get_metric(reset)
+        return {
+            "ArcIOU": iou_arc,
+            "RelIOU": iou_rel,
+        }
 
     ### Private methods ###
+
+    @staticmethod
+    def _mirror_mask(mask1d: BoolTensor) -> BoolTensor:
+        """
+        Mirror mask symmetrically, so that mask2d[:, i, j] = True iff mask1d[:, i] = mask1d[:, j] = True.
+        Example:
+        >>> mask1d = torch.BoolTensor([[True, False, True, True]])
+        >>> _mirror_mask(mask)
+        tensor([[[ True,  True, False,  True],
+                 [ True,  True, False,  True],
+                 [False, False, False, False],
+                 [ True,  True, False,  True]],
+
+                [[False, False, False, False],
+                 [False,  True,  True, False],
+                 [False,  True,  True, False],
+                 [False, False, False, False]]])
+        """
+        return mask1d[:, None, :] * mask1d[:, :, None]
+
+    @staticmethod
+    def _intersection_over_union_score(
+        pred_labels: LongTensor,
+        true_labels: LongTensor
+    ) -> float:
+        # Fisrt convert tensors to list of tuples.
+        pred_labels = [tuple(index) for index in pred_labels.tolist()]
+        true_labels = [tuple(index) for index in true_labels.tolist()]
+        # Then calculate IoU.
+        intersection = set(pred_labels) & set(true_labels)
+        union = set(pred_labels) | set(true_labels)
+        return len(intersection) / len(union)
 
     @staticmethod
     def _internal_to_conllu_arc_format(arcs: Tensor) -> Tensor:

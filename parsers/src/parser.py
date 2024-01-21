@@ -121,8 +121,8 @@ class MorphoSyntaxSemanticParser(Model):
         pos_feats_accuracy = self.pos_feats_classifier.get_metrics(reset)['Accuracy']
         # Syntax.
         syntax_metrics = self.dependency_classifier.get_metrics(reset)
-        uas = syntax_metrics['UAS']
-        las = syntax_metrics['LAS']
+        arc_iou = syntax_metrics['ArcIOU']
+        rel_iou = syntax_metrics['RelIOU']
         # Semantic.
         semslot_accuracy = self.semslot_classifier.get_metrics(reset)['Accuracy']
         semclass_accuracy = self.semclass_classifier.get_metrics(reset)['Accuracy']
@@ -130,8 +130,8 @@ class MorphoSyntaxSemanticParser(Model):
         mean_accuracy = np.mean([
             lemma_accuracy,
             pos_feats_accuracy,
-            uas,
-            las,
+            arc_iou,
+            rel_iou,
             semslot_accuracy,
             semclass_accuracy
         ])
@@ -139,8 +139,8 @@ class MorphoSyntaxSemanticParser(Model):
         return {
             'Lemma': lemma_accuracy,
             'PosFeats': pos_feats_accuracy,
-            'UAS': uas,
-            'LAS': las,
+            'ArcIOU': arc_iou,
+            'RelIOU': rel_iou,
             'SS': semslot_accuracy,
             'SC': semclass_accuracy,
             'Avg': mean_accuracy,

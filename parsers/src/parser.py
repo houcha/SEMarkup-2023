@@ -57,6 +57,10 @@ class MorphoSyntaxSemanticParser(Model):
             in_dim=embedding_dim,
             n_rel_classes=vocab.get_vocab_size("deprel_labels"),
         )
+        self.eud_dependency_classifier = depencency_classifier.construct(
+            in_dim=embedding_dim,
+            n_rel_classes=vocab.get_vocab_size("deps_labels"),
+        )
         self.semslot_classifier = semslot_classifier.construct(
             in_dim=embedding_dim,
             n_classes=vocab.get_vocab_size("semslot_labels"),
@@ -93,6 +97,7 @@ class MorphoSyntaxSemanticParser(Model):
         # Don't mask nulls, as they actually have non-trivial grammatical features we want to learn.
         pos_feats = self.pos_feats_classifier(embeddings, pos_feats_labels, mask)
         syntax = self.dependency_classifier(embeddings, deprel_labels, mask & no_null_mask)
+        eud_syntax = self.eud_dependency_classifier(embeddings, deps_labels, mask)
         semslot = self.semslot_classifier(embeddings, semslot_labels, mask)
         semclass = self.semclass_classifier(embeddings, semclass_labels, mask)
 
@@ -100,6 +105,8 @@ class MorphoSyntaxSemanticParser(Model):
             + pos_feats['loss'] \
             + syntax['arc_loss'] \
             + syntax['rel_loss'] \
+            + eud_syntax['arc_loss'] \
+            + eud_syntax['rel_loss'] \
             + semslot['loss'] \
             + semclass['loss']
 
@@ -123,6 +130,9 @@ class MorphoSyntaxSemanticParser(Model):
         syntax_metrics = self.dependency_classifier.get_metrics(reset)
         arc_iou = syntax_metrics['ArcIOU']
         rel_iou = syntax_metrics['RelIOU']
+        eud_syntax_metrics = self.eud_dependency_classifier.get_metrics(reset)
+        eud_arc_iou = eud_syntax_metrics['ArcIOU']
+        eud_rel_iou = eud_syntax_metrics['RelIOU']
         # Semantic.
         semslot_accuracy = self.semslot_classifier.get_metrics(reset)['Accuracy']
         semclass_accuracy = self.semclass_classifier.get_metrics(reset)['Accuracy']
@@ -132,6 +142,8 @@ class MorphoSyntaxSemanticParser(Model):
             pos_feats_accuracy,
             arc_iou,
             rel_iou,
+            eud_arc_iou,
+            eud_rel_iou,
             semslot_accuracy,
             semclass_accuracy
         ])
@@ -141,6 +153,8 @@ class MorphoSyntaxSemanticParser(Model):
             'PosFeats': pos_feats_accuracy,
             'ArcIOU': arc_iou,
             'RelIOU': rel_iou,
+            'EUD-ArcIOU': eud_arc_iou,
+            'EUD-RelIOU': eud_rel_iou,
             'SS': semslot_accuracy,
             'SC': semclass_accuracy,
             'Avg': mean_accuracy,

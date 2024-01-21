@@ -264,6 +264,12 @@ class ComprenoUDDatasetReader(DatasetReader):
                         assert head != index, f"head = {head + 1} must not be equal to index = {index + 1}"
                     edge = (index, head)
                     edges.append(edge)
+                    # FIXME: DEBUG!
+                    for i in range(len(relations)):
+                        if ':' in relations[i]:
+                            a, b = relations[i].split(':', 1)
+                            if a in ['obl', 'nmod', 'advcl', 'acl']:
+                                relations[i] = a
                     edges_labels.append(relations)
             fields['deps_labels'] = MultilabelAdjacencyField(edges, text_field, edges_labels, 'deps_labels')
 

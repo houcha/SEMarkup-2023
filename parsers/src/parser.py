@@ -73,7 +73,6 @@ class MorphoSyntaxSemanticParser(Model):
         null_mask: TensorField,
         lemma_rule_labels: Tensor = None,
         pos_feats_labels: Tensor = None,
-        head_labels: Tensor = None,
         deprel_labels: Tensor = None,
         deps_labels: Tensor = None,
         misc_labels: Tensor = None,
@@ -93,7 +92,7 @@ class MorphoSyntaxSemanticParser(Model):
         lemma_rule = self.lemma_rule_classifier(embeddings, lemma_rule_labels, mask & no_null_mask, metadata)
         # Don't mask nulls, as they actually have non-trivial grammatical features we want to learn.
         pos_feats = self.pos_feats_classifier(embeddings, pos_feats_labels, mask)
-        syntax = self.dependency_classifier(embeddings, head_labels, deprel_labels, mask & no_null_mask)
+        syntax = self.dependency_classifier(embeddings, deprel_labels, mask & no_null_mask)
         semslot = self.semslot_classifier(embeddings, semslot_labels, mask)
         semclass = self.semclass_classifier(embeddings, semclass_labels, mask)
 

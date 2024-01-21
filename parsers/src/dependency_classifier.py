@@ -38,7 +38,8 @@ class DependencyClassifier(Model):
         hid_dim: int,
         n_rel_classes: int,
         activation: str,
-        dropout: float
+        dropout: float,
+        target_padding_value: int = -1
     ):
         super().__init__(vocab)
 
@@ -56,16 +57,19 @@ class DependencyClassifier(Model):
         self.arc_attention = BilinearMatrixAttention(hid_dim, hid_dim, use_input_biases=False, label_dim=1)
         self.rel_attention = BilinearMatrixAttention(hid_dim, hid_dim, use_input_biases=True, label_dim=n_rel_classes)
 
+        self.target_padding_value = target_padding_value
         self.criterion = nn.CrossEntropyLoss()
         self.metric = AttachmentScores()
 
     def forward(
         self,
-        embeddings: Tensor, # [batch_size, seq_len, embedding_dim]
-        arc_labels: Tensor, # [batch_size, seq_len]
-        rel_labels: Tensor, # [batch_size, seq_len]
-        mask: Tensor        # [batch_size, seq_len]
+        embeddings: Tensor,    # [batch_size, seq_len, embedding_dim]
+        deprel_labels: Tensor, # [batch_size, seq_len, seq_len, num_labels]
+        mask1d: Tensor         # [batch_size, seq_len]
     ) -> Dict[str, Tensor]:
+        # Mirror mask, so that mask2d[:, i, j] = True iff mask1d[:, i] = mask1d[:, j] = True.
+        # [batch_size, seq_len, seq_len]
+        mask2d = mask1d[:, None, :] * mask1d[:, :, None]
 
         # [batch_size, seq_len, hid_dim]
         h_arc_head = self.arc_head_mlp(embeddings)
@@ -76,19 +80,16 @@ class DependencyClassifier(Model):
         # [batch_size, seq_len, seq_len]
         s_arc = self.arc_attention(h_arc_head, h_arc_dep)
         # Mask values with -inf (symmetrically),
-        # I.e. if mask[i, j] = 0, then s_arc[i, :, j] = -inf and s_arc[i, j, :] = -inf.
-        s_arc = replace_masked_values(s_arc, mask[:, None, :] * mask[:, :, None], replace_with=-float("inf"))
+        s_arc = replace_masked_values(s_arc, mask2d, replace_with=-float("inf"))
         # [batch_size, seq_len, seq_len, num_labels]
         s_rel = self.rel_attention(h_rel_head, h_rel_dep).permute(0, 2, 3, 1)
 
-        predicted_arcs, predicted_rels = self.decode(s_arc, s_rel, mask)
+        predicted_arcs, predicted_rels = self.decode(s_arc, s_rel, mask1d)
 
-        if arc_labels is not None and rel_labels is not None:
+        if deprel_labels is not None:
             # Now both predicted_arcs and arc_labels have internal format.
-            arc_labels = self._conllu_to_internal_arc_format(arc_labels)
-
-            arc_loss, rel_loss = self.loss(s_arc, s_rel, arc_labels, rel_labels, mask)
-            self.metric(predicted_arcs, predicted_rels, arc_labels, rel_labels, mask)
+            arc_loss, rel_loss = self.loss(s_arc, s_rel, deprel_labels, mask2d)
+            self.calc_metric(predicted_arcs, predicted_rels, deprel_labels, mask2d)
         else:
             arc_loss, rel_loss = torch.tensor(0.), torch.tensor(0.)
 
@@ -202,6 +203,7 @@ class DependencyClassifier(Model):
 
         # ...and predict relations.
         predicted_rels = s_rel.argmax(-1)
+
         # Select rels towards predicted arcs.
         # [batch_size, seq_len]
         predicted_rels = predicted_rels.gather(-1, predicted_arcs[:, :, None]).squeeze(-1)
@@ -213,62 +215,51 @@ class DependencyClassifier(Model):
 
     def loss(
         self,
-        s_arc: Tensor,       # [batch_size, seq_len, seq_len]
-        s_rel: Tensor,       # [batch_size, seq_len, seq_len, num_labels]
-        target_arcs: Tensor, # [batch_size, seq_len]
-        target_rels: Tensor, # [batch_size, seq_len]
-        mask: Tensor         # [batch_size, seq_len]
+        s_arc: Tensor,  # [batch_size, seq_len, seq_len]
+        s_rel: Tensor,  # [batch_size, seq_len, seq_len, num_labels]
+        target: Tensor, # [batch_size, seq_len, seq_len, num_labels]
+        mask: Tensor    # [batch_size, seq_len, seq_len]
     ) -> Tuple[Tensor, Tensor]:
 
-        # [mask.sum(), seq_len]
-        s_arc = s_arc[mask]
-        # [mask.sum()]
-        target_arcs = target_arcs[mask]
+        max_values, labels = target.max(dim=-1)
+        # [batch_size, seq_len, seq_len]
+        # has_edge_mask[:, i, j] = True iff target has edge at index [i, j].
+        has_edge_mask = max_values != self.target_padding_value
+        # Check that all edges are contained within the mask.
+        assert torch.all((has_edge_mask & (~mask)) == False)
 
-        # [mask.sum(), seq_len, num_labels]
-        s_rel = s_rel[mask]
-        # Select the predicted logits towards the correct heads.
-        # [mask.sum(), num_labels]
-        s_rel = s_rel[torch.arange(len(target_arcs)), target_arcs]
-        # [mask.sum()]
-        target_rels = target_rels[mask]
+        # [batch_size, seq_len]
+        has_head_mask = torch.any(has_edge_mask == True, dim=-1)
 
-        arc_loss = self.criterion(s_arc, target_arcs)
-        rel_loss = self.criterion(s_rel, target_rels)
+        target_heads = max_values.argmax(dim=-1)
+        arc_loss = self.criterion(s_arc[has_head_mask], target_heads[has_head_mask])
+        rel_loss = self.criterion(s_rel[has_edge_mask], labels[has_edge_mask])
 
         assert arc_loss != float("inf")
         assert rel_loss != float("inf")
         return arc_loss, rel_loss
+
+    def calc_metric(
+        self,
+        predicted_arcs: Tensor,  # [batch_size, seq_len, seq_len]
+        predicted_rels: Tensor,  # [batch_size, seq_len, seq_len, num_labels]
+        target: Tensor,          # [batch_size, seq_len, seq_len, num_labels]
+        mask: Tensor             # [batch_size, seq_len, seq_len]
+    ):
+        # Same as with loss.
+        max_values, labels = target.max(dim=-1)
+        has_edge_mask = max_values != self.target_padding_value
+        has_head_mask = torch.any(has_edge_mask == True, dim=-1)
+        target_heads = max_values.argmax(dim=-1)
+        target_rels = labels[has_edge_mask]
+
+        self.metric(predicted_arcs[has_head_mask], predicted_rels[has_head_mask], target_heads[has_head_mask], target_rels)
 
     # @override
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
         return self.metric.get_metric(reset)
 
     ### Private methods ###
-
-    @staticmethod
-    def _conllu_to_internal_arc_format(arcs: Tensor) -> Tensor:
-        """
-        Converts CoNLL-U head labels to internal head labels.
-        """
-        # Copy tensor, otherwise input arc_labels will be modified.
-        arcs = arcs.detach()
-        DependencyClassifier._replace_root_id_with_self_id(arcs)
-        # At this point, all head labels are greater than zero
-        # (since CoNLL-U implies that 'id' tag is greater than zero).
-        # However, it's more convenient to have [0, seq_len-1] range rather than [1, seq_len].
-        arcs -= 1
-        return arcs
-
-    @staticmethod
-    def _replace_root_id_with_self_id(arcs: Tensor) -> None:
-        """
-        Hack: Replace zero head (=ROOT label) with self index for each sentence in a batch.
-        NB: Inplace operation.
-        """
-        roots_indexes = (arcs == 0).nonzero()
-        arcs[roots_indexes[:, 0], roots_indexes[:, 1]] = roots_indexes[:, 1] + 1
-        return arcs
 
     @staticmethod
     def _internal_to_conllu_arc_format(arcs: Tensor) -> Tensor:

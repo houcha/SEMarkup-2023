@@ -224,17 +224,34 @@ class ComprenoUDDatasetReader(DatasetReader):
             ]
             fields['pos_feats_labels'] = SequenceLabelField(joint_pos_feats, text_field, 'pos_feats_labels')
 
-        if heads is not None:
-            fields['head_labels'] = SequenceLabelField(heads, text_field, 'head_labels')
+        if heads is not None and deprels is not None:
+            edges = []
+            edges_labels = []
+            for index, (head, relation) in enumerate(zip(heads, deprels)):
+                # Skip nulls.
+                if head == -1:
+                    continue
 
-        if deprels is not None:
-            fields['deprel_labels'] = SequenceLabelField(deprels, text_field, 'deprel_labels')
+                assert 0 <= head
+                # Hack: start indexing at 0 and replace ROOT with self-loop.
+                # It makes parser implementation much easier.
+                if head == 0:
+                    # Replace ROOT with self-loop.
+                    head = index
+                else:
+                    # If not ROOT, shift token left.
+                    head -= 1
+                    assert head != index, f"head = {head + 1} must not be equal to index = {index + 1}"
+                edge = (index, head)
+                edges.append(edge)
+                edges_labels.append([relation])
+            fields['deprel_labels'] = MultilabelAdjacencyField(edges, text_field, edges_labels, 'deprel_labels')
 
         if deps is not None:
             edges = []
             edges_labels = []
             for index, token_deps in enumerate(deps):
-                for head, head_relations in token_deps.items():
+                for head, relations in token_deps.items():
                     assert 0 <= head
                     # Hack: start indexing at 0 and replace ROOT with self-loop.
                     # It makes parser implementation much easier.
@@ -245,9 +262,9 @@ class ComprenoUDDatasetReader(DatasetReader):
                         # If not ROOT, shift token left.
                         head -= 1
                         assert head != index, f"head = {head + 1} must not be equal to index = {index + 1}"
-                    edge = (head, index)
+                    edge = (index, head)
                     edges.append(edge)
-                    edges_labels.append(head_relations)
+                    edges_labels.append(relations)
             fields['deps_labels'] = MultilabelAdjacencyField(edges, text_field, edges_labels, 'deps_labels')
 
         if miscs is not None:

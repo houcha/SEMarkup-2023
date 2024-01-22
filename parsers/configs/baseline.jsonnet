@@ -2,7 +2,7 @@
 # See https://guide.allennlp.org/training-and-prediction#2 for guidance.
 {
     "train_data_path": "data/train.conllu",
-    "validation_data_path": "data/val.conllu",
+    "validation_data_path": "data/validation.conllu",
     "dataset_reader": {
         "type": "compreno_ud_dataset_reader", # Use custom dataset reader.
         "token_indexers": {
@@ -59,6 +59,11 @@
             "hid_dim": 1024,
             "activation": "relu",
             "dropout": 0.1
+        },
+        "null_classifier": {
+            "hid_dim": 512,
+            "activation": "relu",
+            "dropout": 0.1
         }
     },
     "trainer": {
@@ -76,7 +81,8 @@
                     "pos_feats_classifier",
                     "dependency_classifier",
                     "semslot_classifier",
-                    "semclass_classifier"
+                    "semclass_classifier",
+                    "null_classifier"
                     ], {}
                 ],
             ],

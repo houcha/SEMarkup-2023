@@ -5,7 +5,7 @@ from typing import Dict
 import numpy as np
 
 import torch
-from torch import Tensor
+from torch import Tensor, BoolTensor
 
 from allennlp.nn.util import get_text_field_mask
 from allennlp.common import Lazy
@@ -38,7 +38,8 @@ class MorphoSyntaxSemanticParser(Model):
         pos_feats_classifier: Lazy[FeedForwardClassifier],
         depencency_classifier: Lazy[DependencyClassifier],
         semslot_classifier: Lazy[FeedForwardClassifier],
-        semclass_classifier: Lazy[FeedForwardClassifier]
+        semclass_classifier: Lazy[FeedForwardClassifier],
+        null_classifier: Lazy[FeedForwardClassifier]
     ):
         super().__init__(vocab)
 
@@ -66,12 +67,17 @@ class MorphoSyntaxSemanticParser(Model):
             in_dim=embedding_dim,
             n_classes=vocab.get_vocab_size("semclass_labels"),
         )
+        self.null_classifier = null_classifier.construct(
+            in_dim=embedding_dim,
+            n_classes=2
+        )
 
     # @override(check_signature=False)
     def forward(
         self,
         words: TextFieldTensors,
-        null_mask: TensorField,
+        null_mask: Tensor,
+        words_nulls_excluded: TextFieldTensors,
         lemma_rule_labels: Tensor = None,
         pos_feats_labels: Tensor = None,
         deprel_labels: Tensor = None,
@@ -81,6 +87,17 @@ class MorphoSyntaxSemanticParser(Model):
         semclass_labels: Tensor = None,
         metadata: Dict = None
     ) -> Dict[str, Tensor]:
+
+        # [batch_size, seq_len]
+        mask_nulls_included = get_text_field_mask(words)
+        mask_nulls_excluded = get_text_field_mask(words_nulls_excluded)
+        # [batch_size, seq_len]
+        target_has_null_after = self._build_has_null_after(null_mask, mask_nulls_included).long()
+        # Make sure reconstructed targets are of correct length.
+        assert target_has_null_after.shape[1] == mask_nulls_excluded.shape[1]
+        # [batch_size, seq_len, embedding_dim]
+        embeddings_no_nulls = self.embedder(**words_nulls_excluded['tokens'])
+        nulls = self.null_classifier(embeddings_no_nulls, target_has_null_after, mask_nulls_excluded)
 
         # [batch_size, seq_len, embedding_dim]
         embeddings = self.embedder(**words['tokens'])
@@ -104,7 +121,8 @@ class MorphoSyntaxSemanticParser(Model):
             + syntax['arc_loss_eud'] \
             + syntax['rel_loss_eud'] \
             + semslot['loss'] \
-            + semclass['loss']
+            + semclass['loss'] \
+            + nulls['loss']
 
         return {
             'lemma_rule_preds': lemma_rule['preds'],
@@ -116,6 +134,19 @@ class MorphoSyntaxSemanticParser(Model):
             'loss': loss,
             'metadata': metadata,
         }
+
+    @staticmethod
+    def _build_has_null_after(null_mask: BoolTensor, padding_mask: BoolTensor) -> BoolTensor:
+        """
+        Return mask without nulls, where mask[:, i] = True iff token i has null after him in original sentence (with nulls).
+        """
+        has_null_after = null_mask.roll(shifts=-1, dims=-1)
+        # If null is the first token in a sentence, then... well, we ignore it :|
+        has_null_after[:, -1] = False
+        not_null_mask = (~null_mask) & padding_mask
+        non_null_tokens_count = not_null_mask.sum(1)
+        has_null_after_trimmed = torch.masked_select(has_null_after, not_null_mask).split(non_null_tokens_count.tolist())
+        return torch.nn.utils.rnn.pad_sequence(has_null_after_trimmed, batch_first=True, padding_value=False)
 
     # @override
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
@@ -142,6 +173,8 @@ class MorphoSyntaxSemanticParser(Model):
             semslot_accuracy,
             semclass_accuracy
         ])
+        # Nulls (do not average).
+        null_accuracy = self.null_classifier.get_metrics(reset)['Accuracy']
 
         return {
             'Lemma': lemma_accuracy,
@@ -153,6 +186,7 @@ class MorphoSyntaxSemanticParser(Model):
             'SS': semslot_accuracy,
             'SC': semclass_accuracy,
             'Avg': mean_accuracy,
+            'Null': null_accuracy
         }
 
     # @override(check_signature=False)

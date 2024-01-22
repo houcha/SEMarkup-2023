@@ -13,13 +13,6 @@ from .lemmatize_helper import predict_lemma_rule
 from .multilabel_adjacency_field import MultilabelAdjacencyField
 
 
-def is_null(token: Token) -> bool:
-    """
-    Check whether token is ellipted (null token).
-    """
-    return token["form"] == "#NULL"
-
-
 class Sentence:
     """
     A wrapper over conllu.models.TokenList.
@@ -29,7 +22,7 @@ class Sentence:
         self._tokens = deepcopy(tokens)
         Sentence._renumerate_tokens(self._tokens)
         # Cache mask.
-        self._null_mask = [is_null(token) for token in tokens]
+        self._null_mask = [self._is_null(token) for token in tokens]
 
     def _collect_field(self, field_type: str) -> Optional[List]:
         field_values = [token[field_type] for token in self._tokens]
@@ -62,6 +55,13 @@ class Sentence:
             for head, rels in token["deps"].items():
                 new_deps[old2new_id[head]] = rels
             token["deps"] = new_deps
+
+    @staticmethod
+    def _is_null(token: Token) -> bool:
+        """
+        Check whether token is ellipted (null token).
+        """
+        return token["form"] == "#NULL"
 
     @property
     def null_mask(self) -> List[bool]:
@@ -211,6 +211,15 @@ class ComprenoUDDatasetReader(DatasetReader):
 
         fields = {}
         fields['words'] = text_field
+
+        # TODO: delete
+        # We first want to feed parser tokens with nulls excluded in order it to predict nulls first.
+        # Ideally, we should mask TextFieldTensors (i.e. "token_ids", "mask", "wordpiece_mask"... fields) manually,
+        # but it is quite tough, so we end up using a little hack and duplicating a text field with nulls excluded.
+        words_nulls_excluded = [word for word, is_null in zip(words, null_mask) if not is_null]
+        fields['words_nulls_excluded'] = TextField(list(map(Token, words_nulls_excluded)), self.token_indexers)
+
+        # Pass null mask.
         fields['null_mask'] = TensorField(torch.BoolTensor(null_mask), padding_value=False)
 
         if lemmas is not None:

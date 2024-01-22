@@ -21,13 +21,15 @@ class FeedForwardClassifier(Model):
     """
     A simple classifier composed of two feed-forward layers separated by a nonlinear activation.
     """
-    def __init__(self,
-                 vocab: Vocabulary,
-                 in_dim: int,
-                 hid_dim: int,
-                 n_classes: int,
-                 activation: str,
-                 dropout: float):
+    def __init__(
+        self,
+        vocab: Vocabulary,
+        in_dim: int,
+        hid_dim: int,
+        n_classes: int,
+        activation: str,
+        dropout: float
+    ):
         super().__init__(vocab)
 
         self.classifier = nn.Sequential(
@@ -41,11 +43,13 @@ class FeedForwardClassifier(Model):
         self.metric = CategoricalAccuracy()
 
     # @override(check_signature=False)
-    def forward(self,
-                embeddings: Tensor,
-                labels: Tensor = None,
-                mask: Tensor = None
-                ) -> Dict[str, Tensor]:
+    def forward(
+        self,
+        embeddings: Tensor,
+        labels: Tensor = None,
+        mask: Tensor = None
+    ) -> Dict[str, Tensor]:
+
         logits = self.classifier(embeddings)
         preds = logits.argmax(-1)
 

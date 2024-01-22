@@ -23,10 +23,11 @@
     "vocabulary": {
         "type": "vocabulary_weighted",
         "min_count": {
-            "lemma_rule_labels": 2 # Ignore lemmatization rules encountered 1 time in training dataset.
+            # Ignore lemmatization rules encountered 1 time in training dataset.
+            "lemma_rule_labels": 2
         },
-        "tokens_to_add": { # Add default OOV tokens.
-            "lemma_rule_labels": ["@@UNKNOWN@@"],
+        "tokens_to_add": {
+            "lemma_rule_labels": ["@@UNKNOWN@@"], # Add default OOV tokens.
         }
     },
     "model": {
@@ -71,6 +72,7 @@
             "hid_dim": 1024,
             "activation": "relu",
             "dropout": 0.1,
+            "use_crf": true,
         },
         "semclass_classifier": {
             "hid_dim": 1024,
@@ -125,6 +127,6 @@
         "num_epochs": 15,
         "validation_metric": "+AverageAccuracy", # Track average score of all scores. '+' stands for 'higher - better'.
         "grad_clipping": 5.0, # Clip gradient if too high.
-        "cuda_device": 1, # GPU
+        "cuda_device": 2, # GPU
     }
 }

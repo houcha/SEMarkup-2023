@@ -79,9 +79,9 @@ class FeedForwardClassifier(Model):
         loss = torch.tensor(0.0)
         if labels is not None:
             if self.crf is not None:
-                log_likelihood = self.crf(logits, labels, mask)
-                loss = self.loss(-log_likelihood) * self.head_loss_weight
-                # print(f"crf loss: {loss}")
+                batch_size = embeddings.shape[0]
+                log_likelihood_avg = self.crf(logits, labels, mask) / batch_size
+                loss = self.loss(-log_likelihood_avg) * self.head_loss_weight
             else:
                 loss = self.loss(logits, labels, mask) * self.head_loss_weight
             self.update_metrics(logits, labels, mask)

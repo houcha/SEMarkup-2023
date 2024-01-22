@@ -55,11 +55,8 @@ class MorphoSyntaxSemanticParser(Model):
         )
         self.dependency_classifier = depencency_classifier.construct(
             in_dim=embedding_dim,
-            n_rel_classes=vocab.get_vocab_size("deprel_labels"),
-        )
-        self.eud_dependency_classifier = depencency_classifier.construct(
-            in_dim=embedding_dim,
-            n_rel_classes=vocab.get_vocab_size("deps_labels"),
+            n_rel_classes_ud=vocab.get_vocab_size("deprel_labels"),
+            n_rel_classes_eud=vocab.get_vocab_size("deps_labels"),
         )
         self.semslot_classifier = semslot_classifier.construct(
             in_dim=embedding_dim,
@@ -96,17 +93,16 @@ class MorphoSyntaxSemanticParser(Model):
         lemma_rule = self.lemma_rule_classifier(embeddings, lemma_rule_labels, mask & no_null_mask, metadata)
         # Don't mask nulls, as they actually have non-trivial grammatical features we want to learn.
         pos_feats = self.pos_feats_classifier(embeddings, pos_feats_labels, mask)
-        syntax = self.dependency_classifier(embeddings, deprel_labels, mask & no_null_mask)
-        eud_syntax = self.eud_dependency_classifier(embeddings, deps_labels, mask)
+        syntax = self.dependency_classifier(embeddings, deprel_labels, deps_labels, mask & no_null_mask, mask)
         semslot = self.semslot_classifier(embeddings, semslot_labels, mask)
         semclass = self.semclass_classifier(embeddings, semclass_labels, mask)
 
         loss = lemma_rule['loss'] \
             + pos_feats['loss'] \
-            + syntax['arc_loss'] \
-            + syntax['rel_loss'] \
-            + eud_syntax['arc_loss'] \
-            + eud_syntax['rel_loss'] \
+            + syntax['arc_loss_ud'] \
+            + syntax['rel_loss_ud'] \
+            + syntax['arc_loss_eud'] \
+            + syntax['rel_loss_eud'] \
             + semslot['loss'] \
             + semclass['loss']
 
@@ -128,11 +124,10 @@ class MorphoSyntaxSemanticParser(Model):
         pos_feats_accuracy = self.pos_feats_classifier.get_metrics(reset)['Accuracy']
         # Syntax.
         syntax_metrics = self.dependency_classifier.get_metrics(reset)
-        arc_iou = syntax_metrics['ArcIOU']
-        rel_iou = syntax_metrics['RelIOU']
-        eud_syntax_metrics = self.eud_dependency_classifier.get_metrics(reset)
-        eud_arc_iou = eud_syntax_metrics['ArcIOU']
-        eud_rel_iou = eud_syntax_metrics['RelIOU']
+        ud_arc_iou = syntax_metrics['UD-ArcIOU']
+        ud_rel_iou = syntax_metrics['UD-RelIOU']
+        eud_arc_iou = syntax_metrics['EUD-ArcIOU']
+        eud_rel_iou = syntax_metrics['EUD-RelIOU']
         # Semantic.
         semslot_accuracy = self.semslot_classifier.get_metrics(reset)['Accuracy']
         semclass_accuracy = self.semclass_classifier.get_metrics(reset)['Accuracy']
@@ -140,8 +135,8 @@ class MorphoSyntaxSemanticParser(Model):
         mean_accuracy = np.mean([
             lemma_accuracy,
             pos_feats_accuracy,
-            arc_iou,
-            rel_iou,
+            ud_arc_iou,
+            ud_rel_iou,
             eud_arc_iou,
             eud_rel_iou,
             semslot_accuracy,
@@ -151,10 +146,12 @@ class MorphoSyntaxSemanticParser(Model):
         return {
             'Lemma': lemma_accuracy,
             'PosFeats': pos_feats_accuracy,
-            'ArcIOU': arc_iou,
-            'RelIOU': rel_iou,
+            'UD-ArcIOU': ud_arc_iou,
+            'UD-RelIOU': ud_rel_iou,
             'EUD-ArcIOU': eud_arc_iou,
             'EUD-RelIOU': eud_rel_iou,
+            'UAS': syntax_metrics["UAS"],
+            'LAS': syntax_metrics["LAS"],
             'SS': semslot_accuracy,
             'SC': semclass_accuracy,
             'Avg': mean_accuracy,

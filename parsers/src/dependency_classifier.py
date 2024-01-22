@@ -36,7 +36,8 @@ class DependencyClassifier(Model):
         vocab: Vocabulary,
         in_dim: int, #= embedding_dim
         hid_dim: int,
-        n_rel_classes: int,
+        n_rel_classes_ud: int,
+        n_rel_classes_eud: int,
         activation: str,
         dropout: float,
     ):
@@ -53,20 +54,29 @@ class DependencyClassifier(Model):
         self.rel_dep_mlp = deepcopy(mlp)
         self.rel_head_mlp = deepcopy(mlp)
 
-        self.arc_attention = BilinearMatrixAttention(hid_dim, hid_dim, use_input_biases=False, label_dim=1)
-        self.rel_attention = BilinearMatrixAttention(hid_dim, hid_dim, use_input_biases=True, label_dim=n_rel_classes)
+        self.arc_attention_ud = BilinearMatrixAttention(hid_dim, hid_dim, use_input_biases=False, label_dim=1)
+        self.rel_attention_ud = BilinearMatrixAttention(hid_dim, hid_dim, use_input_biases=True, label_dim=n_rel_classes_ud)
+
+        self.arc_attention_eud = BilinearMatrixAttention(hid_dim, hid_dim, use_input_biases=False, label_dim=1)
+        self.rel_attention_eud = BilinearMatrixAttention(hid_dim, hid_dim, use_input_biases=True, label_dim=n_rel_classes_eud)
 
         # Loss.
-        self.criterion = nn.BCEWithLogitsLoss(reduction='none')
+        self.criterion_ud = nn.CrossEntropyLoss()
+        self.criterion_eud = nn.BCEWithLogitsLoss(reduction='none')
         # Metrics.
-        self.iou_arc = Average()
-        self.iou_rel = Average()
+        self.attachment_score = AttachmentScores()
+        self.iou_arc_ud = Average()
+        self.iou_rel_ud = Average()
+        self.iou_arc_eud = Average()
+        self.iou_rel_eud = Average()
 
     def forward(
         self,
         embeddings: Tensor,    # [batch_size, seq_len, embedding_dim]
         deprel_labels: Tensor, # [batch_size, seq_len, seq_len, num_labels]
-        mask: Tensor           # [batch_size, seq_len]
+        deps_labels: Tensor,   # [batch_size, seq_len, seq_len, num_labels_eud]
+        mask_ud: Tensor,       # [batch_size, seq_len]
+        mask_eud: Tensor       # [batch_size, seq_len]
     ) -> Dict[str, Tensor]:
 
         # [batch_size, seq_len, hid_dim]
@@ -75,49 +85,138 @@ class DependencyClassifier(Model):
         h_rel_head = self.rel_head_mlp(embeddings)
         h_rel_dep = self.rel_dep_mlp(embeddings)
 
-        # [batch_size, seq_len, seq_len]
-        # s_arc[:, i, j] = Score of edge j -> i.
-        s_arc = self.arc_attention(h_arc_head, h_arc_dep)
-        # Mask undesirable values with -inf,
-        s_arc = replace_masked_values(s_arc, self._mirror_mask(mask), replace_with=-float("inf"))
-        # [batch_size, seq_len, seq_len, num_labels]
-        s_rel = self.rel_attention(h_rel_head, h_rel_dep).permute(0, 2, 3, 1)
+        s_arc_ud, s_rel_ud = self._forward(
+            h_arc_head, h_arc_dep, h_rel_head, h_rel_dep,
+            self.arc_attention_ud, self.rel_attention_ud, mask_ud
+        )
+        s_arc_eud, s_rel_eud = self._forward(
+            h_arc_head, h_arc_dep, h_rel_head, h_rel_dep,
+            self.arc_attention_eud, self.rel_attention_eud, mask_eud
+        )
 
-        pred_arcs, pred_rels = self.decode(s_arc, s_rel, mask)
+        pred_arcs_ud, pred_rels_ud = self.decode_ud(s_arc_ud, s_rel_ud, mask_ud)
+        pred_arcs_eud, pred_rels_eud = self.decode_eud(s_arc_eud, s_rel_eud, mask_eud)
 
-        if deprel_labels is not None:
-            arc_loss, rel_loss = self.loss(s_arc, s_rel, deprel_labels)
-            self.calc_metric(pred_arcs, pred_rels, deprel_labels)
-        else:
-            arc_loss, rel_loss = torch.tensor(0.), torch.tensor(0.)
+        arc_loss_ud, rel_loss_ud = torch.tensor(0.), torch.tensor(0.)
+        arc_loss_eud, rel_loss_eud = torch.tensor(0.), torch.tensor(0.)
+
+        if deprel_labels is not None and deps_labels is not None:
+            arc_loss_ud, rel_loss_ud = self.loss(s_arc_ud, s_rel_ud, deprel_labels, is_multilabel=False)
+            arc_loss_eud, rel_loss_eud = self.loss(s_arc_eud, s_rel_eud, deps_labels, is_multilabel=True)
+
+            iou_arc_score_ud, iou_rel_score_ud = self.calc_metric(pred_arcs_ud, pred_rels_ud, deprel_labels)
+            self.iou_arc_ud(iou_arc_score_ud)
+            self.iou_rel_ud(iou_rel_score_ud)
+
+            # Select rels towards predicted arcs.
+            # [batch_size, seq_len]
+            pred_arcs_ud_ = pred_arcs_ud.argmax(-1)
+            pred_rels_ud_ = pred_rels_ud.argmax(-1).gather(-1, pred_arcs_ud_[:, :, None]).squeeze(-1)
+            true_arcs_ud_ = (deprel_labels.max(dim=-1).values != -1).long().argmax(-1)
+            true_rels_ud_ = deprel_labels.argmax(-1).gather(-1, true_arcs_ud_[:, :, None]).squeeze(-1)
+            self.attachment_score(pred_arcs_ud_, pred_rels_ud_, true_arcs_ud_, true_rels_ud_, mask_ud)
+
+            iou_arc_score_eud, iou_rel_score_eud = self.calc_metric(pred_arcs_eud, pred_rels_eud, deps_labels)
+            self.iou_arc_eud(iou_arc_score_eud)
+            self.iou_rel_eud(iou_rel_score_eud)
 
         # Now both predicted_arcs and arc_labels have conllu format.
         #pred_arcs = self._internal_to_conllu_arc_format(pred_arcs)
 
         return {
-            'arc_preds': pred_arcs,
-            'rel_preds': pred_rels,
-            'arc_loss': arc_loss,
-            'rel_loss': rel_loss
+            'arc_preds': pred_arcs_ud, # FIXME
+            'rel_preds': pred_rels_ud,
+            'arc_loss_ud': arc_loss_ud,
+            'rel_loss_ud': rel_loss_ud,
+            'arc_loss_eud': arc_loss_eud,
+            'rel_loss_eud': rel_loss_eud,
         }
 
-    def decode(
+    @staticmethod
+    def _forward(
+        h_arc_head,
+        h_arc_dep,
+        h_rel_head,
+        h_rel_dep,
+        arc_attention,
+        rel_attention,
+        mask
+    ):
+        # [batch_size, seq_len, seq_len]
+        # s_arc[:, i, j] = Score of edge j -> i.
+        s_arc = arc_attention(h_arc_head, h_arc_dep)
+        # Mask undesirable values with -inf,
+        s_arc = replace_masked_values(s_arc, DependencyClassifier._mirror_mask(mask), replace_with=-float("inf"))
+        # [batch_size, seq_len, seq_len, num_labels]
+        s_rel = rel_attention(h_rel_head, h_rel_dep).permute(0, 2, 3, 1)
+        return s_arc, s_rel
+
+    def decode_ud(
         self,
-        s_arc: Tensor, # [batch_size, seq_len, seq_len]
-        s_rel: Tensor, # [batch_size, seq_len, seq_len, num_labels]
-        mask: Tensor   # [batch_size, seq_len]
+        s_arc: Tensor,      # [batch_size, seq_len, seq_len]
+        s_rel: Tensor,      # [batch_size, seq_len, seq_len, num_labels]
+        mask: Tensor,       # [batch_size, seq_len]
     ) -> Tuple[Tensor, Tensor]:
 
-        return self.greedy_decode(s_arc, s_rel)
-    #    if self.training:
-    #        return self.greedy_decode(s_arc, s_rel)
-    #    else:
-    #        return self.mst_decode(s_arc, s_rel, mask)
+        if self.training:
+            arcs, rels = self.greedy_decode_softmax(s_arc, s_rel)
+        else:
+            arcs, rels = self.mst_decode(s_arc, s_rel, mask)
 
-    def greedy_decode(
+        # Select the most probable arcs.
+        # [batch_size, seq_len, seq_len]
+        pred_arcs = torch.zeros_like(s_arc, dtype=torch.long).scatter(-1, arcs.unsqueeze(-1), 1)
+
+        # Select the most probable rels for each arc.
+        # [batch_size, seq_len, seq_len, num_labels]
+        arcs_with_rels = pred_arcs.clone()
+        arcs_with_rels[pred_arcs == 1] = rels.flatten()
+        pred_rels = torch.zeros_like(s_rel, dtype=torch.long).scatter(-1, arcs_with_rels.unsqueeze(-1), 1)
+
+        # Zero out padding.
+        mask2d = self._mirror_mask(mask)
+        pred_arcs = pred_arcs * mask2d
+        pred_rels = pred_rels * mask2d[..., None]
+
+        return pred_arcs, pred_rels
+
+    def decode_eud(
         self,
-        s_arc: Tensor, # [batch_size, seq_len, seq_len]
-        s_rel: Tensor, # [batch_size, seq_len, seq_len, num_labels]
+        s_arc: Tensor,      # [batch_size, seq_len, seq_len]
+        s_rel: Tensor,      # [batch_size, seq_len, seq_len, num_labels]
+        mask: Tensor,       # [batch_size, seq_len]
+    ) -> Tuple[Tensor, Tensor]:
+
+        pred_arcs, pred_rels = self.greedy_decode_sigmoid(s_arc, s_rel)
+        # Zero out padding.
+        mask2d = self._mirror_mask(mask)
+        pred_arcs = pred_arcs * mask2d
+        pred_rels = pred_rels * mask2d[..., None]
+        return pred_arcs, pred_rels
+
+    def greedy_decode_softmax(
+        self,
+        s_arc: Tensor,  # [batch_size, seq_len, seq_len]
+        s_rel: Tensor,  # [batch_size, seq_len, seq_len, num_labels]
+    ) -> Tuple[Tensor, Tensor]:
+
+        # Select the most probable arcs.
+        # [batch_size, seq_len]
+        pred_arcs = s_arc.argmax(-1)
+
+        # Select the most probable rels for each arc.
+        # [batch_size, seq_len, seq_len]
+        pred_rels = s_rel.argmax(-1)
+        # Select rels towards predicted arcs.
+        # [batch_size, seq_len]
+        pred_rels = pred_rels.gather(-1, pred_arcs[:, :, None]).squeeze(-1)
+
+        return pred_arcs, pred_rels
+
+    def greedy_decode_sigmoid(
+        self,
+        s_arc: Tensor,  # [batch_size, seq_len, seq_len]
+        s_rel: Tensor,  # [batch_size, seq_len, seq_len, num_labels]
     ) -> Tuple[Tensor, Tensor]:
 
         # Select all probable arcs.
@@ -127,7 +226,6 @@ class DependencyClassifier(Model):
         # Select all probable rels for each arc.
         # [batch_size, seq_len, seq_len, num_labels]
         pred_rels = torch.sigmoid(s_rel).round().long()
-        # Select rels towards predicted arcs.
 
         return pred_arcs, pred_rels
 
@@ -212,6 +310,7 @@ class DependencyClassifier(Model):
         s_arc: Tensor,  # [batch_size, seq_len, seq_len]
         s_rel: Tensor,  # [batch_size, seq_len, seq_len, num_labels]
         target: Tensor, # [batch_size, seq_len, seq_len, num_labels]
+        is_multilabel: bool
     ) -> Tuple[Tensor, Tensor]:
 
         # has_arc_mask[:, i, j] = True iff target has edge at index [i, j].
@@ -222,16 +321,19 @@ class DependencyClassifier(Model):
         # [batch_size, seq_len, seq_len]
         mask2d = self._mirror_mask(mask)
 
-        # [batch_size, seq_len]
-        arc_losses = self.criterion(s_arc[mask], has_arc_mask[mask].float())
-        arc_loss = arc_losses[mask2d[mask]].mean()
+        if is_multilabel:
+            # [batch_size, seq_len]
+            arc_losses = self.criterion_eud(s_arc[mask], has_arc_mask[mask].float())
+            arc_loss = arc_losses[mask2d[mask]].mean()
+            # [batch_size, seq_len]
+            rel_losses = self.criterion_eud(s_rel[has_arc_mask], target[has_arc_mask].float())
+            rel_loss = rel_losses.mean()
+        else:
+            arc_loss = self.criterion_ud(s_arc[mask], has_arc_mask[mask].long().argmax(-1))
+            rel_loss = self.criterion_ud(s_rel[has_arc_mask], target[has_arc_mask].argmax(-1))
+
         assert arc_loss != float("inf")
-
-        # [batch_size, seq_len]
-        rel_losses = self.criterion(s_rel[has_arc_mask], target[has_arc_mask].float())
-        rel_loss = rel_losses.mean()
         assert rel_loss != float("inf")
-
         return arc_loss, rel_loss
 
     def calc_metric(
@@ -249,25 +351,32 @@ class DependencyClassifier(Model):
         # [batch_size, seq_len, seq_len]
         mask2d = self._mirror_mask(mask)
         
-        # Kinda UAS
+        # Multilabel UAS
         target_arcs_idxs = has_arc_mask.nonzero()
-        pred_arcs_idxs = pred_arcs.nonzero()
-        iou_arc_score = self._intersection_over_union_score(pred_arcs_idxs, target_arcs_idxs)
-        self.iou_arc(iou_arc_score)
+        pred_arcs_idxs = (pred_arcs * mask2d).nonzero()
+        iou_arc_score = self._multilabel_attachment_score(pred_arcs_idxs, target_arcs_idxs)
 
-        # Kinda LAS
+        # Multilabel LAS
         target_rels_idxs = (target * has_arc_mask[..., None]).nonzero()
-        pred_rels_idxs = (pred_rels * pred_arcs[..., None]).nonzero()
-        iou_rel_score = self._intersection_over_union_score(pred_rels_idxs, target_rels_idxs)
-        self.iou_rel(iou_rel_score)
+        pred_rels_idxs = (pred_rels * pred_arcs[..., None] * mask2d[..., None]).nonzero()
+        iou_rel_score = self._multilabel_attachment_score(pred_rels_idxs, target_rels_idxs)
+
+        return iou_arc_score, iou_rel_score
 
     # @override
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
-        iou_arc = self.iou_arc.get_metric(reset)
-        iou_rel = self.iou_rel.get_metric(reset)
+        atts = self.attachment_score.get_metric(reset)
+        iou_arc_ud = self.iou_arc_ud.get_metric(reset)
+        iou_rel_ud = self.iou_rel_ud.get_metric(reset)
+        iou_arc_eud = self.iou_arc_eud.get_metric(reset)
+        iou_rel_eud = self.iou_rel_eud.get_metric(reset)
         return {
-            "ArcIOU": iou_arc,
-            "RelIOU": iou_rel,
+            "UD-ArcIOU": iou_arc_ud,
+            "UD-RelIOU": iou_rel_ud,
+            "EUD-ArcIOU": iou_arc_eud,
+            "EUD-RelIOU": iou_rel_eud,
+            "UAS": atts["UAS"],
+            "LAS": atts["LAS"],
         }
 
     ### Private methods ###
@@ -292,17 +401,23 @@ class DependencyClassifier(Model):
         return mask1d[:, None, :] * mask1d[:, :, None]
 
     @staticmethod
-    def _intersection_over_union_score(
+    def _multilabel_attachment_score(
         pred_labels: LongTensor,
         true_labels: LongTensor
     ) -> float:
-        # Fisrt convert tensors to list of tuples.
+        """
+        Measures similarity of sets of indices.
+        Basically an Intersection over Union measure, but "Union" is replaced with "Max", so that
+        this score is equal to UAS/LAS for single-label classification.
+        """
+        # Fisrt convert tensors to lists of tuples.
         pred_labels = [tuple(index) for index in pred_labels.tolist()]
         true_labels = [tuple(index) for index in true_labels.tolist()]
         # Then calculate IoU.
         intersection = set(pred_labels) & set(true_labels)
         union = set(pred_labels) | set(true_labels)
-        return len(intersection) / len(union)
+        max_len = len(pred_labels) if len(pred_labels) > len(true_labels) else len(true_labels)
+        return len(intersection) / max_len
 
     @staticmethod
     def _internal_to_conllu_arc_format(arcs: Tensor) -> Tensor:

@@ -36,6 +36,7 @@ def parse_deps(value: str) -> dict:
     deps = {}
     for dep in value.split('|'):
         head, rel = dep.split(':', 1)
+
         if head not in deps:
             deps[head] = []
         deps[head].append(rel)
@@ -43,8 +44,8 @@ def parse_deps(value: str) -> dict:
 
 
 FIELD_CUSTOM_PARSERS = {
-    # not parse_int_value, as in https://github.com/EmilStenstrom/conllu/blob/master/conllu/parser.py
-    # "head": lambda line, i: line[i], # conllu.parser.parse_id_value(line[i]),
+    "id": lambda line, i: line[i],
+    "head": lambda line, i: line[i],
     "deps": lambda line, i: parse_deps(line[i]),
     "misc": lambda line, i: line[i]
 }

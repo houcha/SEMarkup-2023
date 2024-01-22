@@ -10,15 +10,6 @@ sys.path.insert(0,'..')
 from semarkup import parse_semarkup, Sentence
 
 
-IS_VALID = True
-
-
-def expect(condition: bool, message: str, sentence: Sentence) -> None:
-    if not condition:
-        print(f"Error: {message}")
-        print(f"Sentence:\n{sentence.serialize()}")
-
-
 def load_dict_from_json(json_file_path: str) -> Dict:
     with open(json_file_path, "r") as file:
         data = json.load(file)
@@ -53,7 +44,6 @@ def validate_semarkup(sentences: Iterable[Sentence], vocab_file: str = None) -> 
         vocab["xpos"] = set(vocab["xpos"])
         for cat, grams in vocab["feats"].items():
             vocab["feats"][cat] = set(grams)
-        vocab["heads"] = set(vocab["heads"])
         vocab["deprels"] = set(vocab["deprels"])
         vocab["semslots"] = set(vocab["semslots"])
         vocab["semclasses"] = set(vocab["semclasses"])
@@ -76,14 +66,13 @@ def validate_semarkup(sentences: Iterable[Sentence], vocab_file: str = None) -> 
                 # Null validation
                 if "#null" in token.form.lower():
                     assert token.form == "#NULL", f"Did you mean #NULL?: {token.form}"
-                    assert token.head is None, f"Null's head = {token.head} != _"
+                    assert token.head == '_', f"Null's head = {token.head} != _"
+                    token.head = None
                     assert token.deprel == '_', f"Null's deprel = {token.deprel} != _"
-                    assert len(token.deps) == 0, f"Null's deps = {token.deps} != _"
+                    assert len(token.deps) > 0, f"Null's deps = {token.deps} != _"
                     assert token.misc == 'ellipsis', f"Null's misc != ellipsis"
-                else:
-                    # Non-null tokens must have non-empty head.
-                    assert token.head is not None, f"Token: {token.form} has head = {token.head} != '_'"
-
+                    continue
+                
                 # UPOS
                 if vocab_file is not None:
                     assert token.upos in vocab["upos"], \
@@ -101,22 +90,24 @@ def validate_semarkup(sentences: Iterable[Sentence], vocab_file: str = None) -> 
                             f"grammatical category {cat} is out of vocabulary."
                         assert gram in vocab["feats"][cat], \
                             f"grammeme {gram} is out of vocabulary."
+
                 # Head
-                assert token.head is None or type(token.head) is int, \
-                    f"Head must be either _ or integer."
-                if type(token.head) is int:
-                    # FIXME <= len(sentence), \
-                    assert 0 <= token.head, \
-                        f"Head must be non-negative. Encountered {token.head}"
-                    if token.head == 0:
-                        roots_count += 1
-                    sentence_heads.add(token.head)
+                # Non-null tokens must have non-empty head.
+                assert is_int(token.head), f"Non-null tokens must have integer head."
+                token.head = int(token.head)
+                if is_int(token.id):
+                    assert token.head != int(token.id), f"Self-loops are not allowed in heads. Head: {token.head}"
+                assert 0 <= token.head, f"Head must be non-negative. Encountered {token.head}"
+                if token.head == 0:
+                    roots_count += 1
+                sentence_heads.add(token.head)
 
                 # Deps
                 for head, rels in token.deps.items():
                     assert is_int(head) or is_null(head), \
                         f"Deps head must be either int or null (x.1). Encountered: {head}"
-                    # FIXME: <= len(sentence) + 1 # +1, since #NULL may be at the end of a sentence.
+                    assert head != token.id, \
+                        f"Self-loops are not allowed in deps. Head: {head}"
                     assert 0 <= float(head), \
                         f"Deps head must be non-negative. Encountered: {head}"
                     sentence_deps_heads.add(head)
@@ -135,8 +126,8 @@ def validate_semarkup(sentences: Iterable[Sentence], vocab_file: str = None) -> 
             assert not ids_diff, f"Sentence ids are non-continuous, absent ids: {ids_diff}"
             head_ids_diff = sentence_heads - sentence_natural_ids - {0}
             assert not head_ids_diff, f"Heads' ids are not consistent with ids, extra ids: {head_ids_diff}"
-            deps_head_ids_diff = sentence_deps_heads - sentence_all_ids - {0}
-            assert not head_ids_diff, f"Deps heads' ids are not consistent with ids, extra ids: {deps_head_ids_diff}"
+            deps_head_ids_diff = sentence_deps_heads - sentence_all_ids - {'0'}
+            assert not deps_head_ids_diff, f"Deps heads' ids are not consistent with ids, extra ids: {deps_head_ids_diff}"
             assert roots_count == 1, "There must be one ROOT (head=0) in a sentence."
 
         except AssertionError as e:

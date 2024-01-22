@@ -64,11 +64,10 @@ class DependencyClassifier(Model):
         self.criterion_ud = nn.CrossEntropyLoss()
         self.criterion_eud = nn.BCEWithLogitsLoss(reduction='none')
         # Metrics.
-        self.attachment_score = AttachmentScores()
-        self.iou_arc_ud = Average()
-        self.iou_rel_ud = Average()
-        self.iou_arc_eud = Average()
-        self.iou_rel_eud = Average()
+        self.uas_ud = Average()
+        self.las_ud = Average()
+        self.uas_eud = Average()
+        self.las_eud = Average()
 
     def forward(
         self,
@@ -98,27 +97,18 @@ class DependencyClassifier(Model):
         pred_arcs_eud, pred_rels_eud = self.decode_eud(s_arc_eud, s_rel_eud, mask_eud)
 
         arc_loss_ud, rel_loss_ud = torch.tensor(0.), torch.tensor(0.)
-        arc_loss_eud, rel_loss_eud = torch.tensor(0.), torch.tensor(0.)
-
-        if deprel_labels is not None and deps_labels is not None:
+        if deprel_labels is not None:
             arc_loss_ud, rel_loss_ud = self.loss(s_arc_ud, s_rel_ud, deprel_labels, is_multilabel=False)
+            uas_ud, las_ud = self.calc_metric(pred_arcs_ud, pred_rels_ud, deprel_labels)
+            self.uas_ud(uas_ud)
+            self.las_ud(las_ud)
+
+        arc_loss_eud, rel_loss_eud = torch.tensor(0.), torch.tensor(0.)
+        if deps_labels is not None:
             arc_loss_eud, rel_loss_eud = self.loss(s_arc_eud, s_rel_eud, deps_labels, is_multilabel=True)
-
-            iou_arc_score_ud, iou_rel_score_ud = self.calc_metric(pred_arcs_ud, pred_rels_ud, deprel_labels)
-            self.iou_arc_ud(iou_arc_score_ud)
-            self.iou_rel_ud(iou_rel_score_ud)
-
-            # Select rels towards predicted arcs.
-            # [batch_size, seq_len]
-            pred_arcs_ud_ = pred_arcs_ud.argmax(-1)
-            pred_rels_ud_ = pred_rels_ud.argmax(-1).gather(-1, pred_arcs_ud_[:, :, None]).squeeze(-1)
-            true_arcs_ud_ = (deprel_labels.max(dim=-1).values != -1).long().argmax(-1)
-            true_rels_ud_ = deprel_labels.argmax(-1).gather(-1, true_arcs_ud_[:, :, None]).squeeze(-1)
-            self.attachment_score(pred_arcs_ud_, pred_rels_ud_, true_arcs_ud_, true_rels_ud_, mask_ud)
-
-            iou_arc_score_eud, iou_rel_score_eud = self.calc_metric(pred_arcs_eud, pred_rels_eud, deps_labels)
-            self.iou_arc_eud(iou_arc_score_eud)
-            self.iou_rel_eud(iou_rel_score_eud)
+            uas_eud, las_eud = self.calc_metric(pred_arcs_eud, pred_rels_eud, deps_labels)
+            self.uas_eud(uas_eud)
+            self.las_eud(las_eud)
 
         # Now both predicted_arcs and arc_labels have conllu format.
         #pred_arcs = self._internal_to_conllu_arc_format(pred_arcs)
@@ -351,32 +341,29 @@ class DependencyClassifier(Model):
         # [batch_size, seq_len, seq_len]
         mask2d = self._mirror_mask(mask)
         
-        # Multilabel UAS
+        # Multilabel UAS.
         target_arcs_idxs = has_arc_mask.nonzero()
         pred_arcs_idxs = (pred_arcs * mask2d).nonzero()
-        iou_arc_score = self._multilabel_attachment_score(pred_arcs_idxs, target_arcs_idxs)
+        uas = self._multilabel_attachment_score(pred_arcs_idxs, target_arcs_idxs)
 
-        # Multilabel LAS
+        # Multilabel LAS.
         target_rels_idxs = (target * has_arc_mask[..., None]).nonzero()
         pred_rels_idxs = (pred_rels * pred_arcs[..., None] * mask2d[..., None]).nonzero()
-        iou_rel_score = self._multilabel_attachment_score(pred_rels_idxs, target_rels_idxs)
+        las = self._multilabel_attachment_score(pred_rels_idxs, target_rels_idxs)
 
-        return iou_arc_score, iou_rel_score
+        return uas, las
 
     # @override
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
-        atts = self.attachment_score.get_metric(reset)
-        iou_arc_ud = self.iou_arc_ud.get_metric(reset)
-        iou_rel_ud = self.iou_rel_ud.get_metric(reset)
-        iou_arc_eud = self.iou_arc_eud.get_metric(reset)
-        iou_rel_eud = self.iou_rel_eud.get_metric(reset)
+        uas_ud = self.uas_ud.get_metric(reset)
+        las_ud = self.las_ud.get_metric(reset)
+        uas_eud = self.uas_eud.get_metric(reset)
+        las_eud = self.las_eud.get_metric(reset)
         return {
-            "UD-ArcIOU": iou_arc_ud,
-            "UD-RelIOU": iou_rel_ud,
-            "EUD-ArcIOU": iou_arc_eud,
-            "EUD-RelIOU": iou_rel_eud,
-            "UAS": atts["UAS"],
-            "LAS": atts["LAS"],
+            "UD-UAS": uas_ud,
+            "UD-LAS": las_ud,
+            "EUD-UAS": uas_eud,
+            "EUD-LAS": las_eud,
         }
 
     ### Private methods ###

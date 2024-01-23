@@ -15,7 +15,7 @@ from allennlp.data.vocabulary import Vocabulary, DEFAULT_OOV_TOKEN
 from allennlp.models import Model
 from allennlp.modules.token_embedders.token_embedder import TokenEmbedder
 
-from .feedforward_classifier import FeedForwardClassifier, LemmaClassifier
+from .feedforward_classifier import FeedForwardClassifier, BinaryClassifier, LemmaClassifier
 from .dependency_classifier import DependencyClassifier
 from .lemmatize_helper import LemmaRule, predict_lemma_from_rule
 
@@ -39,7 +39,7 @@ class MorphoSyntaxSemanticParser(Model):
         depencency_classifier: Lazy[DependencyClassifier],
         semslot_classifier: Lazy[FeedForwardClassifier],
         semclass_classifier: Lazy[FeedForwardClassifier],
-        null_classifier: Lazy[FeedForwardClassifier]
+        null_classifier: Lazy[BinaryClassifier]
     ):
         super().__init__(vocab)
 
@@ -69,7 +69,6 @@ class MorphoSyntaxSemanticParser(Model):
         )
         self.null_classifier = null_classifier.construct(
             in_dim=embedding_dim,
-            n_classes=2
         )
 
     # @override(check_signature=False)
@@ -174,7 +173,9 @@ class MorphoSyntaxSemanticParser(Model):
             semclass_accuracy
         ])
         # Nulls (do not average).
-        null_accuracy = self.null_classifier.get_metrics(reset)['Accuracy']
+        null_metrics = self.null_classifier.get_metrics(reset)
+        null_accuracy = null_metrics["Accuracy"]
+        null_f1score = null_metrics["f1"]
 
         return {
             'Lemma': lemma_accuracy,
@@ -186,7 +187,8 @@ class MorphoSyntaxSemanticParser(Model):
             'SS': semslot_accuracy,
             'SC': semclass_accuracy,
             'Avg': mean_accuracy,
-            'Null': null_accuracy
+            'NullAccuracy': null_accuracy,
+            'NullF1': null_f1score
         }
 
     # @override(check_signature=False)

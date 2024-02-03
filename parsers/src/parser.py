@@ -10,17 +10,17 @@ from torch import Tensor, BoolTensor
 from allennlp.nn.util import get_text_field_mask, move_to_device, get_device_of
 from allennlp.common import Lazy
 from allennlp.data import TextFieldTensors
-from allennlp.data.fields import TensorField
 from allennlp.data.vocabulary import Vocabulary, DEFAULT_OOV_TOKEN
 from allennlp.models import Model
 from allennlp.modules.token_embedders.token_embedder import TokenEmbedder
 from allennlp.data.token_indexers import TokenIndexer
 
 from .dataset_reader import Token
-from .feedforward_classifier import FeedForwardClassifier, LemmaClassifier
+from .feedforward_classifier import FeedForwardClassifier
+from .lemma_classifier import LemmaClassifier
+from .lemmatize_helper import LemmaRule, predict_lemma_from_rule
 from .null_classifier import NullClassifier
 from .dependency_classifier import DependencyClassifier
-from .lemmatize_helper import LemmaRule, predict_lemma_from_rule
 
 
 def get_null_mask(sentences: List[List[Token]]) -> BoolTensor:

@@ -11,7 +11,7 @@ from torch import Tensor
 from allennlp.data.vocabulary import Vocabulary, DEFAULT_OOV_TOKEN
 from allennlp.models import Model
 from allennlp.nn.activations import Activation
-from allennlp.training.metrics import CategoricalAccuracy, F1Measure
+from allennlp.training.metrics import CategoricalAccuracy
 
 from .lemmatize_helper import LemmaRule, predict_lemma_from_rule, normalize, DEFAULT_LEMMA_RULE
 
@@ -69,37 +69,6 @@ class FeedForwardClassifier(Model):
     # @override
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
         return {"Accuracy": self.accuracy.get_metric(reset)}
-
-
-@Model.register('binary_classifier')
-class BinaryClassifier(FeedForwardClassifier):
-    def __init__(
-        self,
-        vocab: Vocabulary,
-        in_dim: int,
-        hid_dim: int,
-        activation: str,
-        dropout: float,
-        positive_class_weight: float = 1.0
-    ):
-        super().__init__(vocab, in_dim, hid_dim, 2, activation, dropout)
-
-        weight = torch.Tensor([1.0, positive_class_weight])
-        self.criterion = nn.CrossEntropyLoss(weight=weight)
-        self.accuracy = CategoricalAccuracy()
-        self.fscore = F1Measure(positive_label=1)
-
-    def update_metrics(self, logits: Tensor, labels: Tensor, mask: Tensor):
-        self.accuracy(logits, labels, mask)
-        self.fscore(logits, labels, mask)
-
-    # @override
-    def get_metrics(self, reset: bool = False) -> Dict[str, float]:
-        f1measure = self.fscore.get_metric(reset)
-        return {
-            "Accuracy": self.accuracy.get_metric(reset),
-            "f1": f1measure["f1"]
-        }
 
 
 @Model.register('lemma_classifier')

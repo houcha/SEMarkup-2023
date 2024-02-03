@@ -1,23 +1,34 @@
 # from overrides import override
 
-from typing import Dict
+from typing import Dict, List
 
 import numpy as np
 
 import torch
 from torch import Tensor, BoolTensor
 
-from allennlp.nn.util import get_text_field_mask
+from allennlp.nn.util import get_text_field_mask, move_to_device, get_device_of
 from allennlp.common import Lazy
 from allennlp.data import TextFieldTensors
 from allennlp.data.fields import TensorField
 from allennlp.data.vocabulary import Vocabulary, DEFAULT_OOV_TOKEN
 from allennlp.models import Model
 from allennlp.modules.token_embedders.token_embedder import TokenEmbedder
+from allennlp.data.token_indexers import TokenIndexer
 
-from .feedforward_classifier import FeedForwardClassifier, BinaryClassifier, LemmaClassifier
+from .dataset_reader import Token
+from .feedforward_classifier import FeedForwardClassifier, LemmaClassifier
+from .null_classifier import NullClassifier
 from .dependency_classifier import DependencyClassifier
 from .lemmatize_helper import LemmaRule, predict_lemma_from_rule
+
+
+def get_null_mask(sentences: List[List[Token]]) -> BoolTensor:
+    return torch.nn.utils.rnn.pad_sequence(
+        [torch.BoolTensor([token.is_null() for token in sentence]) for sentence in sentences],
+        batch_first=True,
+        padding_value=False
+    )
 
 
 @Model.register('morpho_syntax_semantic_parser')
@@ -33,13 +44,14 @@ class MorphoSyntaxSemanticParser(Model):
     def __init__(
         self,
         vocab: Vocabulary,
+        indexer: TokenIndexer,
         embedder: TokenEmbedder,
         lemma_rule_classifier: Lazy[LemmaClassifier],
         pos_feats_classifier: Lazy[FeedForwardClassifier],
         depencency_classifier: Lazy[DependencyClassifier],
         semslot_classifier: Lazy[FeedForwardClassifier],
         semclass_classifier: Lazy[FeedForwardClassifier],
-        null_classifier: Lazy[BinaryClassifier]
+        null_classifier: Lazy[NullClassifier]
     ):
         super().__init__(vocab)
 
@@ -68,6 +80,8 @@ class MorphoSyntaxSemanticParser(Model):
             n_classes=vocab.get_vocab_size("semclass_labels"),
         )
         self.null_classifier = null_classifier.construct(
+            indexer=indexer,
+            embedder=embedder,
             in_dim=embedding_dim,
         )
 
@@ -75,8 +89,7 @@ class MorphoSyntaxSemanticParser(Model):
     def forward(
         self,
         words: TextFieldTensors,
-        null_mask: Tensor,
-        words_nulls_excluded: TextFieldTensors,
+        sentences: List[List[Token]],
         lemma_rule_labels: Tensor = None,
         pos_feats_labels: Tensor = None,
         deprel_labels: Tensor = None,
@@ -87,29 +100,24 @@ class MorphoSyntaxSemanticParser(Model):
         metadata: Dict = None
     ) -> Dict[str, Tensor]:
 
-        # [batch_size, seq_len]
-        mask_nulls_included = get_text_field_mask(words)
-        mask_nulls_excluded = get_text_field_mask(words_nulls_excluded)
-        # [batch_size, seq_len]
-        target_has_null_after = self._build_has_null_after(null_mask, mask_nulls_included).long()
-        # Make sure reconstructed targets are of correct length.
-        assert target_has_null_after.shape[1] == mask_nulls_excluded.shape[1]
-        # [batch_size, seq_len, embedding_dim]
-        embeddings_no_nulls = self.embedder(**words_nulls_excluded['tokens'])
-        nulls = self.null_classifier(embeddings_no_nulls, target_has_null_after, mask_nulls_excluded)
+        device = get_device_of(words["tokens"]["token_ids"])
+
+        nulls, words_with_nulls = self.null_classifier(words, sentences)
+        null_mask = get_null_mask(nulls["preds"])
 
         # [batch_size, seq_len, embedding_dim]
-        embeddings = self.embedder(**words['tokens'])
+        embeddings = self.embedder(**words_with_nulls['tokens'])
         # [batch_size, seq_len]
-        mask = get_text_field_mask(words)
+        mask = get_text_field_mask(words_with_nulls)
         # Mask with nulls excluded.
-        no_null_mask = (~null_mask)
+        null_mask = move_to_device(null_mask, device)
 
         # Mask nulls, since they have trivial lemmas.
-        lemma_rule = self.lemma_rule_classifier(embeddings, lemma_rule_labels, mask & no_null_mask, metadata)
+        lemma_rule = self.lemma_rule_classifier(embeddings, lemma_rule_labels, mask & (~null_mask), metadata)
         # Don't mask nulls, as they actually have non-trivial grammatical features we want to learn.
         pos_feats = self.pos_feats_classifier(embeddings, pos_feats_labels, mask)
-        syntax = self.dependency_classifier(embeddings, deprel_labels, deps_labels, mask & no_null_mask, mask)
+        # Mask nulls for basic UD and don't mask for E-UD.
+        syntax = self.dependency_classifier(embeddings, deprel_labels, deps_labels, mask & (~null_mask), mask)
         semslot = self.semslot_classifier(embeddings, semslot_labels, mask)
         semclass = self.semclass_classifier(embeddings, semclass_labels, mask)
 
@@ -133,19 +141,6 @@ class MorphoSyntaxSemanticParser(Model):
             'loss': loss,
             'metadata': metadata,
         }
-
-    @staticmethod
-    def _build_has_null_after(null_mask: BoolTensor, padding_mask: BoolTensor) -> BoolTensor:
-        """
-        Return mask without nulls, where mask[:, i] = True iff token i has null after him in original sentence (with nulls).
-        """
-        has_null_after = null_mask.roll(shifts=-1, dims=-1)
-        # If null is the first token in a sentence, then... well, we ignore it :|
-        has_null_after[:, -1] = False
-        not_null_mask = (~null_mask) & padding_mask
-        non_null_tokens_count = not_null_mask.sum(1)
-        has_null_after_trimmed = torch.masked_select(has_null_after, not_null_mask).split(non_null_tokens_count.tolist())
-        return torch.nn.utils.rnn.pad_sequence(has_null_after_trimmed, batch_first=True, padding_value=False)
 
     # @override
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
@@ -281,4 +276,3 @@ class MorphoSyntaxSemanticParser(Model):
             "semslots": [semslots],
             "semclasses": [semclasses],
         }
-

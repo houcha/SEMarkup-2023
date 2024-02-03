@@ -1,16 +1,26 @@
 from typing import Iterable, List, Dict, Optional
 from copy import deepcopy
+from dataclasses import dataclass
 
 import conllu
 import torch
 
+import allennlp
 from allennlp.data import DatasetReader, Instance
 from allennlp.data.fields import TextField, TensorField, SequenceLabelField, MetadataField
 from allennlp.data.token_indexers import SingleIdTokenIndexer, TokenIndexer
-from allennlp.data.tokenizers import Token
+from allennlp.data.tokenizers import Token as AllenToken
 
 from .lemmatize_helper import predict_lemma_rule
 from .multilabel_adjacency_field import MultilabelAdjacencyField
+
+
+class Token(conllu.models.Token):
+    def is_null(self) -> bool:
+        """
+        Check whether token is ellipted (null token).
+        """
+        return self["form"] == "#NULL"
 
 
 class Sentence:
@@ -19,10 +29,9 @@ class Sentence:
     """
 
     def __init__(self, tokens: conllu.models.TokenList):
-        self._tokens = deepcopy(tokens)
+        self._tokens = [Token(token) for token in tokens]
+        self._metadata = tokens.metadata
         Sentence._renumerate_tokens(self._tokens)
-        # Cache mask.
-        self._null_mask = [self._is_null(token) for token in tokens]
 
     def _collect_field(self, field_type: str) -> Optional[List]:
         field_values = [token[field_type] for token in self._tokens]
@@ -56,16 +65,9 @@ class Sentence:
                 new_deps[old2new_id[head]] = rels
             token["deps"] = new_deps
 
-    @staticmethod
-    def _is_null(token: Token) -> bool:
-        """
-        Check whether token is ellipted (null token).
-        """
-        return token["form"] == "#NULL"
-
     @property
-    def null_mask(self) -> List[bool]:
-        return self._null_mask
+    def tokens(self) -> List[Token]:
+        return self._tokens
 
     @property
     def ids(self) -> List[int]:
@@ -121,7 +123,7 @@ class Sentence:
 
     @property
     def metadata(self) -> Dict:
-        return self._tokens
+        return self._metadata
 
 
 # TODO: move to utils
@@ -174,8 +176,8 @@ class ComprenoUDDatasetReader(DatasetReader):
 
         for sentence in map(Sentence, sentences):
             yield self.text_to_instance(
+                sentence.tokens,
                 sentence.words,
-                sentence.null_mask,
                 sentence.lemmas,
                 sentence.upos_tags,
                 sentence.xpos_tags,
@@ -191,8 +193,8 @@ class ComprenoUDDatasetReader(DatasetReader):
 
     def text_to_instance(
         self,
+        tokens: List[Token],
         words: List[str],
-        null_mask: List[bool],
         lemmas: List[str] = None,
         upos_tags: List[str] = None,
         xpos_tags: List[str] = None,
@@ -207,20 +209,11 @@ class ComprenoUDDatasetReader(DatasetReader):
     ) -> Instance:
         # TODO: exclude NULLs' tags from vocabulary.
 
-        text_field = TextField(list(map(Token, words)), self.token_indexers)
+        text_field = TextField(list(map(AllenToken, words)), self.token_indexers)
 
         fields = {}
         fields['words'] = text_field
-
-        # TODO: delete
-        # We first want to feed parser tokens with nulls excluded in order it to predict nulls first.
-        # Ideally, we should mask TextFieldTensors (i.e. "token_ids", "mask", "wordpiece_mask"... fields) manually,
-        # but it is quite tough, so we end up using a little hack and duplicating a text field with nulls excluded.
-        words_nulls_excluded = [word for word, is_null in zip(words, null_mask) if not is_null]
-        fields['words_nulls_excluded'] = TextField(list(map(Token, words_nulls_excluded)), self.token_indexers)
-
-        # Pass null mask.
-        fields['null_mask'] = TensorField(torch.BoolTensor(null_mask), padding_value=False)
+        fields['sentences'] = MetadataField(tokens)
 
         if lemmas is not None:
             lemma_rules = [str(predict_lemma_rule(word, lemma)) for word, lemma in zip(words, lemmas)]
@@ -240,7 +233,6 @@ class ComprenoUDDatasetReader(DatasetReader):
                 # Skip nulls.
                 if head == -1:
                     continue
-
                 assert 0 <= head
                 # Hack: start indexing at 0 and replace ROOT with self-loop.
                 # It makes parser implementation much easier.
@@ -273,12 +265,6 @@ class ComprenoUDDatasetReader(DatasetReader):
                         assert head != index, f"head = {head + 1} must not be equal to index = {index + 1}"
                     edge = (index, head)
                     edges.append(edge)
-                    # FIXME: DEBUG!
-                    for i in range(len(relations)):
-                        if ':' in relations[i]:
-                            a, b = relations[i].split(':', 1)
-                            if a in ['obl', 'nmod', 'advcl', 'acl']:
-                                relations[i] = a
                     edges_labels.append(relations)
             fields['deps_labels'] = MultilabelAdjacencyField(edges, text_field, edges_labels, 'deps_labels')
 

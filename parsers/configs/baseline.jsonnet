@@ -8,6 +8,7 @@
         "token_indexers": {
             "tokens": {
                 "type": "pretrained_transformer_mismatched",
+		# WARNING: don't forget to change model.embedder and model.indexer as well.
                 "model_name": "cointegrated/rubert-tiny" # Use rubert-tiny.
             }
         },
@@ -30,6 +31,11 @@
     },
     "model": {
         "type": "morpho_syntax_semantic_parser", # Use custom model.
+	# FIXME: take indexer from dataset_reader
+        "indexer": {
+	    "type": "pretrained_transformer_mismatched",
+	    "model_name": "cointegrated/rubert-tiny"
+        },
         "embedder": {
             "type": "pretrained_transformer_mismatched",
             "model_name": "cointegrated/rubert-tiny",

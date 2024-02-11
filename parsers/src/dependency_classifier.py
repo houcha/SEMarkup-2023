@@ -61,8 +61,8 @@ class DependencyClassifier(Model):
         self.rel_attention_eud = BilinearMatrixAttention(hid_dim, hid_dim, use_input_biases=True, label_dim=n_rel_classes_eud)
 
         # Loss.
-        self.criterion_ud = nn.CrossEntropyLoss()
-        self.criterion_eud = nn.BCEWithLogitsLoss(reduction='none')
+        self.cross_entropy = nn.CrossEntropyLoss()
+        self.bce_loss = nn.BCEWithLogitsLoss(reduction='none')
         # Metrics.
         self.uas_ud = Average()
         self.las_ud = Average()
@@ -110,12 +110,16 @@ class DependencyClassifier(Model):
             self.uas_eud(uas_eud)
             self.las_eud(las_eud)
 
-        # Now both predicted_arcs and arc_labels have conllu format.
-        #pred_arcs = self._internal_to_conllu_arc_format(pred_arcs)
+        pred_rels_ud = (pred_rels_ud * pred_arcs_ud[..., None]).nonzero()
+        pred_arcs_ud = pred_arcs_ud.nonzero()
+        pred_rels_eud = (pred_rels_eud * pred_arcs_eud[..., None]).nonzero()
+        pred_arcs_eud = pred_arcs_eud.nonzero()
 
         return {
-            'arc_preds': pred_arcs_ud, # FIXME
-            'rel_preds': pred_rels_ud,
+            'arc_preds_ud': pred_arcs_ud,
+            'rel_preds_ud': pred_rels_ud,
+            'arc_preds_eud': pred_arcs_eud,
+            'rel_preds_eud': pred_rels_eud,
             'arc_loss_ud': arc_loss_ud,
             'rel_loss_ud': rel_loss_ud,
             'arc_loss_eud': arc_loss_eud,
@@ -313,14 +317,14 @@ class DependencyClassifier(Model):
 
         if is_multilabel:
             # [batch_size, seq_len]
-            arc_losses = self.criterion_eud(s_arc[mask], has_arc_mask[mask].float())
+            arc_losses = self.bce_loss(s_arc[mask], has_arc_mask[mask].float())
             arc_loss = arc_losses[mask2d[mask]].mean()
             # [batch_size, seq_len]
-            rel_losses = self.criterion_eud(s_rel[has_arc_mask], target[has_arc_mask].float())
+            rel_losses = self.bce_loss(s_rel[has_arc_mask], target[has_arc_mask].float())
             rel_loss = rel_losses.mean()
         else:
-            arc_loss = self.criterion_ud(s_arc[mask], has_arc_mask[mask].long().argmax(-1))
-            rel_loss = self.criterion_ud(s_rel[has_arc_mask], target[has_arc_mask].argmax(-1))
+            arc_loss = self.cross_entropy(s_arc[mask], has_arc_mask[mask].long().argmax(-1))
+            rel_loss = self.cross_entropy(s_rel[has_arc_mask], target[has_arc_mask].argmax(-1))
 
         assert arc_loss != float("inf")
         assert rel_loss != float("inf")
@@ -405,25 +409,4 @@ class DependencyClassifier(Model):
         union = set(pred_labels) | set(true_labels)
         max_len = len(pred_labels) if len(pred_labels) > len(true_labels) else len(true_labels)
         return len(intersection) / max_len
-
-    @staticmethod
-    def _internal_to_conllu_arc_format(arcs: Tensor) -> Tensor:
-        """
-        Inverse function for _conllu_to_internal_arc_format.
-        Converts internal head labels to CoNLL-U head labels.
-        """
-        arcs += 1
-        DependencyClassifier._replace_self_id_with_root_id(arcs)
-        return arcs
-
-    @staticmethod
-    def _replace_self_id_with_root_id(arcs: Tensor) -> None:
-        """
-        Inverse function for _replace_root_id_with_self_id.
-        """
-        batch_size, seq_len = arcs.shape
-        id_range = get_range_vector(seq_len, get_device_of(arcs)) + 1
-        is_root_mask = (arcs == id_range.expand(batch_size, -1))
-        arcs = arcs.masked_fill_(is_root_mask, 0)
-        return arcs
 

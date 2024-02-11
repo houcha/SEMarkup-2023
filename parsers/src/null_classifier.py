@@ -14,8 +14,8 @@ from allennlp.nn.util import get_text_field_mask, move_to_device, get_device_of,
 from allennlp.models import Model
 from allennlp.training.metrics import CategoricalAccuracy, F1Measure
 
+from .token import Token, CLS_TOKEN
 from .feedforward_classifier import FeedForwardClassifier
-from .dataset_reader import Token
 
 
 @Model.register('null_classifier')
@@ -55,45 +55,40 @@ class NullClassifier(FeedForwardClassifier):
         self,
         words: TextFieldTensors,
         sentences: List[List[Token]],
-        should_predict_nulls: bool = False
+        is_inference: bool
     ) -> Dict[str, Tensor]:
 
         device = get_device_of(words["tokens"]["token_ids"])
 
-        if not should_predict_nulls:
-            words_with_nulls = words
-            # Extra [CLS] token accounts for the case when #NULL is the first token in a sentence.
-            sentences_with_nulls = self._add_cls_token(sentences)
-            sentences_no_nulls = self._filter_nulls(sentences_with_nulls)
+        words_with_nulls = words
+        sentences_with_nulls = sentences
+        # Extra [CLS] token accounts for the case when #NULL is the first token in a sentence.
+        sentences_with_cls_and_nulls = self._add_cls_token(sentences_with_nulls)
+        sentences_with_cls_and_no_nulls = self._remove_nulls(sentences_with_cls_and_nulls)
 
-            target_has_null_after = self._build_has_null_after(sentences_with_nulls).long()
-            target_has_null_after = move_to_device(target_has_null_after, device)
+        target_has_null_after = self._build_has_null_after(sentences_with_cls_and_nulls).long()
+        target_has_null_after = move_to_device(target_has_null_after, device)
 
-            words_no_nulls = self._create_words(sentences_no_nulls, device)
-            mask_no_nulls = get_text_field_mask(words_no_nulls)
-            embeddings_no_nulls = self.embedder(**words_no_nulls['tokens'])
-            nulls = super().forward(embeddings_no_nulls, target_has_null_after, mask_no_nulls)
-            nulls["preds"] = sentences
-        else:
-            sentences_no_nulls = self._add_cls_token(sentences)
-            words_no_nulls = self._create_words(sentences_no_nulls, device)
+        words_with_cls_and_no_nulls = self._create_words(sentences_with_cls_and_no_nulls, device)
+        mask_no_nulls = get_text_field_mask(words_with_cls_and_no_nulls)
+        embeddings_with_cls_and_no_nulls = self.embedder(**words_with_cls_and_no_nulls['tokens'])
+        nulls = super().forward(embeddings_with_cls_and_no_nulls, target_has_null_after, mask_no_nulls)
+        loss = nulls["loss"]
 
-            embeddings_no_nulls = self.embedder(**words_no_nulls['tokens'])
-            nulls = super().forward(embeddings_no_nulls)
-            # Insert nulls.
-            sentences_with_nulls = self._add_nulls(sentences, nulls["preds"])
-
+        if is_inference:
+            sentences_with_cls_and_nulls = self._add_nulls(sentences_with_cls_and_no_nulls, nulls["preds"])
+            sentences_with_nulls = self._remove_cls_token(sentences_with_cls_and_nulls)
             words_with_nulls = self._create_words(sentences_with_nulls, device=device)
-            nulls["preds"] = sentences_with_nulls
 
-        return nulls, words_with_nulls
+        return words_with_nulls, sentences_with_nulls, loss
 
     def _create_words(self, sentences: List[List[Token]], device):
         text_fields = []
         max_padding_lengths = {}
         
         for sentence in sentences:
-            tokens = [AllenToken(token["form"]) for token in sentence]
+            #print(f"sentence: {sentence}")
+            tokens = [AllenToken(token.form) for token in sentence]
             text_field = TextField(tokens, {"tokens": self.indexer})
             text_field.index(self.vocab)
             if not max_padding_lengths:
@@ -130,15 +125,18 @@ class NullClassifier(FeedForwardClassifier):
         return torch.nn.utils.rnn.pad_sequence(has_null_after_trimmed, batch_first=True, padding_value=False)
 
     @staticmethod
-    def _filter_nulls(sentences: List[List[Token]]):
+    def _remove_nulls(sentences: List[List[Token]]):
         return [[token for token in sentence if not token.is_null()] for sentence in sentences]
 
     @staticmethod
     def _add_cls_token(sentences: List[List[Token]]):
-        cls_token = Token()
-        cls_token["form"] = "[CLS]"
         # Place token on the first position
-        return [[cls_token, *sentence] for sentence in sentences]
+        return [[CLS_TOKEN, *sentence] for sentence in sentences]
+
+    @staticmethod
+    def _remove_cls_token(sentences: List[List[Token]]):
+        # Remove first token.
+        return [sentence[1:] for sentence in sentences]
 
     @staticmethod
     def _add_nulls(sentences: List[List[Token]], nulls):
@@ -148,7 +146,7 @@ class NullClassifier(FeedForwardClassifier):
             for token, should_insert_null in zip(sentence, nulls_sentence):
                 sentence_with_nulls.append(token)
                 if should_insert_null:
-                    sentence_with_nulls.append("#NULL")
+                    sentence_with_nulls.append(Token.create_null(id=f"{token.id}.1"))
             sentences_with_nulls.append(sentence_with_nulls)
         return sentences_with_nulls
 

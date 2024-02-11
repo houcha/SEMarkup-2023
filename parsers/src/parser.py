@@ -15,20 +15,13 @@ from allennlp.models import Model
 from allennlp.modules.token_embedders.token_embedder import TokenEmbedder
 from allennlp.data.token_indexers import TokenIndexer
 
-from .dataset_reader import Token
+from .token import Token
 from .feedforward_classifier import FeedForwardClassifier
 from .lemma_classifier import LemmaClassifier
 from .lemmatize_helper import LemmaRule, predict_lemma_from_rule
 from .null_classifier import NullClassifier
 from .dependency_classifier import DependencyClassifier
-
-
-def get_null_mask(sentences: List[List[Token]]) -> BoolTensor:
-    return torch.nn.utils.rnn.pad_sequence(
-        [torch.BoolTensor([token.is_null() for token in sentence]) for sentence in sentences],
-        batch_first=True,
-        padding_value=False
-    )
+from .utils import get_null_mask
 
 
 @Model.register('morpho_syntax_semantic_parser')
@@ -99,17 +92,25 @@ class MorphoSyntaxSemanticParser(Model):
         semclass_labels: Tensor = None,
         metadata: Dict = None
     ) -> Dict[str, Tensor]:
+        # If all labels are empty, we are at inference.
+        is_inference = lemma_rule_labels is None \
+            and pos_feats_labels is None \
+            and deprel_labels is None \
+            and deps_labels is None \
+            and misc_labels is None  \
+            and semslot_labels is None \
+            and semclass_labels is None \
 
         device = get_device_of(words["tokens"]["token_ids"])
 
-        nulls, words_with_nulls = self.null_classifier(words, sentences)
-        null_mask = get_null_mask(nulls["preds"])
+        words_with_nulls, sentences_with_nulls, null_loss = self.null_classifier(words, sentences, is_inference)
 
         # [batch_size, seq_len, embedding_dim]
         embeddings = self.embedder(**words_with_nulls['tokens'])
-        # [batch_size, seq_len]
+        # Padding mask.
         mask = get_text_field_mask(words_with_nulls)
         # Mask with nulls excluded.
+        null_mask = get_null_mask(sentences_with_nulls)
         null_mask = move_to_device(null_mask, device)
 
         # Mask nulls, since they have trivial lemmas.
@@ -129,13 +130,15 @@ class MorphoSyntaxSemanticParser(Model):
             + syntax['rel_loss_eud'] \
             + semslot['loss'] \
             + semclass['loss'] \
-            + nulls['loss']
+            + null_loss
 
         return {
+            'sentences': sentences_with_nulls,
             'lemma_rule_preds': lemma_rule['preds'],
             'pos_feats_preds': pos_feats['preds'],
-            'head_preds': syntax['arc_preds'],
-            'deprel_preds': syntax['rel_preds'],
+            'head_preds': syntax['arc_preds_ud'],
+            'deprel_preds': syntax['rel_preds_ud'],
+            'deps_preds': syntax['rel_preds_eud'],
             'semslot_preds': semslot['preds'],
             'semclass_preds': semclass['preds'],
             'loss': loss,
@@ -173,6 +176,8 @@ class MorphoSyntaxSemanticParser(Model):
         null_f1score = null_metrics["f1"]
 
         return {
+            'NullAccuracy': null_accuracy,
+            'NullF1': null_f1score,
             'Lemma': lemma_accuracy,
             'PosFeats': pos_feats_accuracy,
             'UD-UAS': uas_ud,
@@ -181,34 +186,31 @@ class MorphoSyntaxSemanticParser(Model):
             'EUD-LAS': las_eud,
             'SS': semslot_accuracy,
             'SC': semclass_accuracy,
-            'Avg': mean_accuracy,
-            'NullAccuracy': null_accuracy,
-            'NullF1': null_f1score
+            'Avg': mean_accuracy
         }
 
     # @override(check_signature=False)
     def make_output_human_readable(self, output: Dict[str, Tensor]) -> Dict[str, list]:
-        sentences = output["metadata"]
-        # Make sure batch_size is 1 during prediction, because 
+        sentences = output["sentences"]
+        # Make sure batch_size is 1 during prediction
         assert len(sentences) == 1
         sentence = sentences[0]
-        metadata = sentence.metadata
 
         # Restore ids.
         ids = []
         for token in sentence:
-            ids.append(token["id"])
+            ids.append(token.id)
 
         # Restore forms.
         forms = []
         for token in sentence:
-            forms.append(token["form"])
+            forms.append(token.form)
 
         # Restore lemmas.
         lemmas = []
         lemma_rule_preds = output["lemma_rule_preds"].tolist()[0]
         for token, lemma_rule_pred in zip(sentence, lemma_rule_preds):
-            word = token["form"]
+            word = token.form
             lemma_rule_str = self.vocab.get_token_from_index(lemma_rule_pred, "lemma_rule_labels")
             if lemma_rule_str == DEFAULT_OOV_TOKEN:
                 lemma = '_'
@@ -232,18 +234,30 @@ class MorphoSyntaxSemanticParser(Model):
             xpos_tags.append(xpos_tag)
             feats_tags.append(feats_tag)
 
-        # Restore heads.
-        # Heads are integers, so simply convert them to strings.
-        heads = list(map(str, output["head_preds"].tolist()[0]))
+        # Restore heads and deprels.
+        heads = [None for _ in range(len(sentence))]
+        deprels = [None for _ in range(len(sentence))]
+        deprel_preds = output["deprel_preds"][:, 1:].tolist()
+        for edge in deprel_preds:
+            edge_to, edge_from, deprel_id = edge
+            # Make sure heads are unique (have no collisions).
+            assert heads[edge_to] is None
+            assert deprels[edge_to] is None
+            # Renumerate nodes starting 1 (now 0) and replace self-loop with ROOT.
+            heads[edge_to] = edge_from + 1 if edge_from != edge_to else 0
+            deprels[edge_to] = self.vocab.get_token_from_index(deprel_id, "deprel_labels")
+            #if deprel == DEFAULT_OOV_TOKEN:
+            #    deprel = '_'
 
-        # Restore deprels.
-        deprels = []
-        deprel_preds = output["deprel_preds"].tolist()[0]
-        for deprel_pred in deprel_preds:
-            deprel = self.vocab.get_token_from_index(deprel_pred, "deprel_labels")
-            if deprel == DEFAULT_OOV_TOKEN:
-                deprel = '_'
-            deprels.append(deprel)
+        # Restore deps.
+        deps = [[] for _ in range(len(sentence))]
+        deps_preds = output["deps_preds"][:, 1:].tolist()
+        for edge in deps_preds:
+            edge_to, edge_from, dep_id = edge
+            dep = self.vocab.get_token_from_index(dep_id, "deps_labels")
+            # Renumerate nodes starting 1 (now 0) and replace self-loop with ROOT.
+            deps[edge_to].append(f"{edge_from + 1 if edge_from != edge_to else 0}:{dep}")
+        deps = ['|'.join(dep) if dep else '_' for dep in deps]
 
         # Restore semslots.
         semslots = []
@@ -263,8 +277,15 @@ class MorphoSyntaxSemanticParser(Model):
                 semclasss = '_'
             semclasses.append(semclass)
 
+        metadata = output["metadata"][0]
+
+        # Manually post-process null tags.
+        for i, token in enumerate(sentence):
+            if token.is_null():
+                heads[i] = '_'
+                deprels[i] = '_'
+
         return {
-            "metadata": [metadata],
             "ids": [ids],
             "forms": [forms],
             "lemmas": [lemmas],
@@ -273,6 +294,8 @@ class MorphoSyntaxSemanticParser(Model):
             "feats": [feats_tags],
             "heads": [heads],
             "deprels": [deprels],
+            "deps": [deps],
             "semslots": [semslots],
             "semclasses": [semclasses],
+            "metadata": [metadata],
         }

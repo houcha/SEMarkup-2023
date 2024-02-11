@@ -1,26 +1,16 @@
 from typing import Iterable, List, Dict, Optional
-from copy import deepcopy
-from dataclasses import dataclass
 
 import conllu
 import torch
 
-import allennlp
 from allennlp.data import DatasetReader, Instance
 from allennlp.data.fields import TextField, TensorField, SequenceLabelField, MetadataField
 from allennlp.data.token_indexers import SingleIdTokenIndexer, TokenIndexer
 from allennlp.data.tokenizers import Token as AllenToken
 
+from .token import Token
 from .lemmatize_helper import predict_lemma_rule
 from .multilabel_adjacency_field import MultilabelAdjacencyField
-
-
-class Token(conllu.models.Token):
-    def is_null(self) -> bool:
-        """
-        Check whether token is ellipted (null token).
-        """
-        return self["form"] == "#NULL"
 
 
 class Sentence:
@@ -29,12 +19,12 @@ class Sentence:
     """
 
     def __init__(self, tokens: conllu.models.TokenList):
-        self._tokens = [Token(token) for token in tokens]
+        self._tokens = [Token(**token) for token in tokens]
         self._metadata = tokens.metadata
         Sentence._renumerate_tokens(self._tokens)
 
     def _collect_field(self, field_type: str) -> Optional[List]:
-        field_values = [token[field_type] for token in self._tokens]
+        field_values = [getattr(token, field_type) for token in self._tokens]
 
         # If all fields are None, return None (=no reference labels).
         if all(field is None for field in field_values):
@@ -52,18 +42,21 @@ class Sentence:
 
         # Change ids.
         for i, token in enumerate(tokens, 1):
-            old_id = token["id"]
+            old_id = token.id
             old2new_id[old_id] = i
-            token["id"] = i
+            token.id = i
 
         # Change heads and deps.
         for i, token in enumerate(tokens, 1):
-            if token["head"] is not None:
-                token["head"] = old2new_id[str(token["head"])]
+            if token.head is not None:
+                token.head = old2new_id[str(token.head)]
             new_deps = {}
-            for head, rels in token["deps"].items():
+            # Special case when deps is empty.
+            if token.deps is None:
+                continue
+            for head, rels in token.deps.items():
                 new_deps[old2new_id[head]] = rels
-            token["deps"] = new_deps
+            token.deps = new_deps
 
     @property
     def tokens(self) -> List[Token]:

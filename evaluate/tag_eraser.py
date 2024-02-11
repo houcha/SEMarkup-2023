@@ -1,6 +1,8 @@
 import argparse
 from tqdm import tqdm
 
+from conllu.models import Token, TokenList
+
 from semarkup import parse_semarkup, write_semarkup
 
 
@@ -8,18 +10,26 @@ def main(input_file_path: str, output_file_path: str) -> None:
     with open(input_file_path, "r") as file:
         sentences = parse_semarkup(file, incr=False)
 
+    clean_sentences = []
     for sentence in tqdm(sentences):
+        clean_sentence = []
         for token in sentence:
+            if token["form"] == "#NULL":
+                continue
             token["lemma"] = ""
             token["upos"] = ""
             token["xpos"] = ""
             token["feats"] = ""
             token["head"] = ""
             token["deprel"] = ""
+            token["deps"] = ""
+            token["misc"] = ""
             token["semslot"] = ""
             token["semclass"] = ""
+            clean_sentence.append(token)
+        clean_sentences.append(TokenList(clean_sentence, metadata=sentence.metadata))
 
-    write_semarkup(output_file_path, sentences)
+    write_semarkup(output_file_path, clean_sentences)
 
 
 if __name__ == "__main__":
@@ -34,7 +44,7 @@ if __name__ == "__main__":
     parser.add_argument(
         'output_file',
         type=str,
-        help='Output file in SEMarkup with true tags removed.'
+        help='Output file in SEMarkup with true tags and nulls removed.'
     )
     args = parser.parse_args()
 

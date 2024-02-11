@@ -84,7 +84,7 @@ class Sentence:
         for token in sentence_copy:
             if not token["deps"]:
                 # If deps is empty, assign _.
-                token["deps"] = '_'
+                token["deps"] = ''
                 continue
 
             dep_str_list = []

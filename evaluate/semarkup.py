@@ -51,20 +51,56 @@ FIELD_CUSTOM_PARSERS = {
 }
 
 
+# TODO: merge with parser/scr/token.py and move to common utils
 class SemarkupToken:
-    def __init__(self, conllu_token: Token):
-        self.id = conllu_token["id"]
-        self.form = conllu_token["form"]
-        self.lemma = conllu_token["lemma"]
-        self.upos = conllu_token["upos"]
-        self.xpos = conllu_token["xpos"]
-        self.feats = conllu_token["feats"] if conllu_token["feats"] is not None else {}
-        self.head = conllu_token["head"]
-        self.deprel = conllu_token["deprel"]
-        self.deps = conllu_token["deps"]
-        self.misc = conllu_token["misc"]
-        self.semslot = conllu_token["semslot"]
-        self.semclass = conllu_token["semclass"]
+    def __init__(
+        self,
+        id = None, # shadow built-in function because ** operator requires exact match with conllu token.
+        form = None,
+        lemma = None,
+        upos = None,
+        xpos = None,
+        feats = None,
+        head = None,
+        deprel = None,
+        deps = None,
+        misc = None,
+        semslot = None,
+        semclass = None
+    ):
+        self.id = id
+        self.form = form
+        self.lemma = lemma
+        self.upos = upos
+        self.xpos = xpos
+        self.feats = feats if feats is not None else {}
+        self.head = head
+        self.deprel = deprel
+        self.deps = deps
+        self.misc = misc
+        self.semslot = semslot
+        self.semclass = semclass
+
+    def is_null(self) -> bool:
+        """
+        Check whether token is ellipted (null token).
+        """
+        return self.form == "#NULL"
+
+    def is_empty(self) -> bool:
+        """
+        Check whether token is empty token.
+        """
+        return self.form == "#EMPTY"
+
+    @staticmethod
+    def create_null(id: str):
+        return Token(id, "#NULL")
+
+
+# Special tokens.
+EMPTY_TOKEN = SemarkupToken(form="#EMPTY")
+CLS_TOKEN = SemarkupToken(id=0, form="[CLS]")
 
 
 class Sentence:
@@ -73,7 +109,7 @@ class Sentence:
         self.sent_id = sentence.metadata['sent_id']
 
     def __getitem__(self, index: int) -> SemarkupToken:
-        return SemarkupToken(self.sentence[index])
+        return SemarkupToken(**self.sentence[index])
 
     def __len__(self) -> int:
         return len(self.sentence)

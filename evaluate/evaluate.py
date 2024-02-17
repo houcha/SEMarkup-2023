@@ -20,12 +20,14 @@ def load_dict_from_json(json_file_path: str) -> Dict:
     return data
 
 
-def main(test_file_path: str,
-         gold_file_path: str,
-         taxonomy_file: str,
-         lemma_weights_file: str,
-         feats_weights_file: str,
-         score_semantic_only: bool) -> Tuple[float]:
+def main(
+    test_file_path: str,
+    gold_file_path: str,
+    taxonomy_file: str,
+    lemma_weights_file: str,
+    feats_weights_file: str,
+    score_semantic_only: bool
+) -> Tuple[float]:
 
     print(f"Load taxonomy from {taxonomy_file}.")
     print(f"Load lemma weights from {lemma_weights_file}.")
@@ -50,16 +52,16 @@ def main(test_file_path: str,
     # Exit on errors.
     if scores is None:
         print("Errors encountered, exit.")
-        return 0, 0, 0, 0, 0, 0, 0, 0
+        return 0, 0, 0, 0, 0, 0, 0, 0, 0
 
-    lemma, pos, feats, head, deprel, semslot, semclass = scores
+    lemma, upos, xpos, feats, head, deprel, deps, semslot, semclass = scores
     # Average average scores into total score.
     if score_semantic_only:
         total = np.mean([head, semslot, semclass])
     else:
-        total = np.mean([lemma, pos, feats, head, deprel, semslot, semclass])
+        total = np.mean([lemma, upos, xpos, feats, head, deprel, deps, semslot, semclass])
 
-    return total, lemma, pos, feats, head, deprel, semslot, semclass
+    return total, lemma, upos, xpos, feats, head, deprel, deps, semslot, semclass
 
 
 if __name__ == "__main__":
@@ -110,7 +112,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    total, lemma, pos, feats, head, deprel, semslot, semclass = main(
+    total, lemma, upos, xpos, feats, head, deprel, deps, semslot, semclass = main(
         args.test_file,
         args.gold_file,
         args.taxonomy_file,
@@ -126,10 +128,12 @@ if __name__ == "__main__":
     print(f"Details:")
     if not args.score_semantic_only:
         print(f"Lemmatization score: {lemma:.{OUTPUT_PRECISION}f}")
-        print(f"POS score: {pos:.{OUTPUT_PRECISION}f}")
+        print(f"UPOS score: {upos:.{OUTPUT_PRECISION}f}")
+        print(f"XPOS score: {xpos:.{OUTPUT_PRECISION}f}")
         print(f"Feats score: {feats:.{OUTPUT_PRECISION}f}")
         print(f"LAS: {deprel:.{OUTPUT_PRECISION}f}")
     print(f"UAS: {head:.{OUTPUT_PRECISION}f}")
+    print(f"ELAS: {deps:.{OUTPUT_PRECISION}f}")
     print(f"SemSlot score: {semslot:.{OUTPUT_PRECISION}f}")
     print(f"SemClass score: {semclass:.{OUTPUT_PRECISION}f}")
 

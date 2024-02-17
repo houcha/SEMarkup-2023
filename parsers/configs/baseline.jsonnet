@@ -56,6 +56,11 @@
             "activation": "relu",
             "dropout": 0.1
         },
+        "misc_classifier": {
+            "hid_dim": 128,
+            "activation": "relu",
+            "dropout": 0.1
+        },
         "semslot_classifier": {
             "hid_dim": 1024,
             "activation": "relu",
@@ -86,6 +91,7 @@
                     "lemma_rule_classifier",
                     "pos_feats_classifier",
                     "dependency_classifier",
+                    "misc_classifier",
                     "semslot_classifier",
                     "semclass_classifier",
                     "null_classifier"

@@ -104,7 +104,11 @@ class Sentence:
 
     @property
     def miscs(self) -> Optional[List[str]]:
-        return self._collect_field("misc")
+        misc_labels = self._collect_field("misc")
+        if misc_labels is not None:
+            # Ignore 'ellipsis' label, for it is assigned to #NULL tokens at post-processing step.
+            misc_labels = [misc if misc != 'ellipsis' else '_' for misc in misc_labels]
+        return misc_labels
 
     @property
     def semslots(self) -> Optional[List[str]]:
@@ -200,8 +204,6 @@ class ComprenoUDDatasetReader(DatasetReader):
         semclasses: List[str] = None,
         metadata: Dict = None,
     ) -> Instance:
-        # TODO: exclude NULLs' tags from vocabulary.
-
         text_field = TextField(list(map(AllenToken, words)), self.token_indexers)
 
         fields = {}

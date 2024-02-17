@@ -42,6 +42,7 @@ class MorphoSyntaxSemanticParser(Model):
         lemma_rule_classifier: Lazy[LemmaClassifier],
         pos_feats_classifier: Lazy[FeedForwardClassifier],
         depencency_classifier: Lazy[DependencyClassifier],
+        misc_classifier: Lazy[FeedForwardClassifier],
         semslot_classifier: Lazy[FeedForwardClassifier],
         semclass_classifier: Lazy[FeedForwardClassifier],
         null_classifier: Lazy[NullClassifier]
@@ -63,6 +64,10 @@ class MorphoSyntaxSemanticParser(Model):
             in_dim=embedding_dim,
             n_rel_classes_ud=vocab.get_vocab_size("deprel_labels"),
             n_rel_classes_eud=vocab.get_vocab_size("deps_labels"),
+        )
+        self.misc_classifier = misc_classifier.construct(
+            in_dim=embedding_dim,
+            n_classes=vocab.get_vocab_size("misc_labels"),
         )
         self.semslot_classifier = semslot_classifier.construct(
             in_dim=embedding_dim,
@@ -119,6 +124,8 @@ class MorphoSyntaxSemanticParser(Model):
         pos_feats = self.pos_feats_classifier(embeddings, pos_feats_labels, mask)
         # Mask nulls for basic UD and don't mask for E-UD.
         syntax = self.dependency_classifier(embeddings, deprel_labels, deps_labels, mask & (~null_mask), mask)
+        #print(misc_labels)
+        misc = self.misc_classifier(embeddings, misc_labels, mask)
         semslot = self.semslot_classifier(embeddings, semslot_labels, mask)
         semclass = self.semclass_classifier(embeddings, semclass_labels, mask)
 
@@ -128,6 +135,7 @@ class MorphoSyntaxSemanticParser(Model):
             + syntax['rel_loss_ud'] \
             + syntax['arc_loss_eud'] \
             + syntax['rel_loss_eud'] \
+            + misc['loss'] \
             + semslot['loss'] \
             + semclass['loss'] \
             + null_loss
@@ -139,6 +147,7 @@ class MorphoSyntaxSemanticParser(Model):
             'head_preds': syntax['arc_preds_ud'],
             'deprel_preds': syntax['rel_preds_ud'],
             'deps_preds': syntax['rel_preds_eud'],
+            'misc_preds': misc['preds'],
             'semslot_preds': semslot['preds'],
             'semclass_preds': semclass['preds'],
             'loss': loss,
@@ -156,6 +165,8 @@ class MorphoSyntaxSemanticParser(Model):
         las_ud = syntax_metrics['UD-LAS']
         uas_eud = syntax_metrics['EUD-UAS']
         las_eud = syntax_metrics['EUD-LAS']
+        # Misc
+        misc_accuracy = self.misc_classifier.get_metrics(reset)['Accuracy']
         # Semantic.
         semslot_accuracy = self.semslot_classifier.get_metrics(reset)['Accuracy']
         semclass_accuracy = self.semclass_classifier.get_metrics(reset)['Accuracy']
@@ -167,6 +178,7 @@ class MorphoSyntaxSemanticParser(Model):
             las_ud,
             uas_eud,
             las_eud,
+            misc_accuracy,
             semslot_accuracy,
             semclass_accuracy
         ])
@@ -184,6 +196,7 @@ class MorphoSyntaxSemanticParser(Model):
             'UD-LAS': las_ud,
             'EUD-UAS': uas_eud,
             'EUD-LAS': las_eud,
+            'Misc': misc_accuracy,
             'SS': semslot_accuracy,
             'SC': semclass_accuracy,
             'Avg': mean_accuracy
@@ -246,8 +259,6 @@ class MorphoSyntaxSemanticParser(Model):
             # Renumerate nodes starting 1 (now 0) and replace self-loop with ROOT.
             heads[edge_to] = edge_from + 1 if edge_from != edge_to else 0
             deprels[edge_to] = self.vocab.get_token_from_index(deprel_id, "deprel_labels")
-            #if deprel == DEFAULT_OOV_TOKEN:
-            #    deprel = '_'
 
         # Restore deps.
         deps = [[] for _ in range(len(sentence))]
@@ -258,6 +269,13 @@ class MorphoSyntaxSemanticParser(Model):
             # Renumerate nodes starting 1 (now 0) and replace self-loop with ROOT.
             deps[edge_to].append(f"{edge_from + 1 if edge_from != edge_to else 0}:{dep}")
         deps = ['|'.join(dep) if dep else '_' for dep in deps]
+
+        # Restore miscs.
+        miscs = []
+        miscs_preds = output["misc_preds"].tolist()[0]
+        for misc_pred in miscs_preds:
+            misc = self.vocab.get_token_from_index(misc_pred, "misc_labels")
+            miscs.append(misc)
 
         # Restore semslots.
         semslots = []
@@ -295,6 +313,7 @@ class MorphoSyntaxSemanticParser(Model):
             "heads": [heads],
             "deprels": [deprels],
             "deps": [deps],
+            "miscs": [miscs],
             "semslots": [semslots],
             "semclasses": [semclasses],
             "metadata": [metadata],

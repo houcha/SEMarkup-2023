@@ -110,6 +110,9 @@ class SEMarkupScorer:
 
     def score_semclass(self, test: SemarkupToken, gold: SemarkupToken) -> float:
         score = test.semclass == gold.semclass
+
+        # FIXME: Is hierarchy available now?
+
         # Handle extra cases.
         #if gold.semclass in self.semclasses_out_of_taxonomy:
         #    return test.semclass == gold.semclass

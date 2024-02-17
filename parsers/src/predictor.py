@@ -28,12 +28,13 @@ class MorphoSyntaxSemanticPredictor(Predictor):
             output["heads"],
             output["deprels"],
             output["deps"],
+            output["miscs"],
             output["semslots"],
             output["semclasses"],
         )
 
         tokens = []
-        for tok_id, form, lemma, upos, xpos, feats, head, deprel, deps, semslot, semclass in tags_iterator:
+        for tok_id, form, lemma, upos, xpos, feats, head, deprel, deps, misc, semslot, semclass in tags_iterator:
             token = Token()
             token["id"] = tok_id
             token["form"] = form
@@ -44,6 +45,7 @@ class MorphoSyntaxSemanticPredictor(Predictor):
             token["head"] = head
             token["deprel"] = deprel
             token["deps"] = deps
+            token["miscs"] = misc
             token["semslot"] = semslot
             token["semclass"] = semclass
             tokens.append(token)

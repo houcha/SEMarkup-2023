@@ -52,16 +52,16 @@ def main(
     # Exit on errors.
     if scores is None:
         print("Errors encountered, exit.")
-        return 0, 0, 0, 0, 0, 0, 0, 0, 0
+        return 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
 
-    lemma, upos, xpos, feats, head, deprel, deps, semslot, semclass = scores
+    lemma, upos, xpos, feats, head, deprel, deps, misc, semslot, semclass = scores
     # Average average scores into total score.
     if score_semantic_only:
         total = np.mean([head, semslot, semclass])
     else:
-        total = np.mean([lemma, upos, xpos, feats, head, deprel, deps, semslot, semclass])
+        total = np.mean([lemma, upos, xpos, feats, head, deprel, deps, misc, semslot, semclass])
 
-    return total, lemma, upos, xpos, feats, head, deprel, deps, semslot, semclass
+    return total, lemma, upos, xpos, feats, head, deprel, deps, misc, semslot, semclass
 
 
 if __name__ == "__main__":
@@ -112,7 +112,7 @@ if __name__ == "__main__":
     )
     args = parser.parse_args()
 
-    total, lemma, upos, xpos, feats, head, deprel, deps, semslot, semclass = main(
+    total, lemma, upos, xpos, feats, head, deprel, deps, misc, semslot, semclass = main(
         args.test_file,
         args.gold_file,
         args.taxonomy_file,
@@ -134,6 +134,7 @@ if __name__ == "__main__":
         print(f"LAS: {deprel:.{OUTPUT_PRECISION}f}")
     print(f"UAS: {head:.{OUTPUT_PRECISION}f}")
     print(f"ELAS: {deps:.{OUTPUT_PRECISION}f}")
+    print(f"Misc score: {misc:.{OUTPUT_PRECISION}f}")
     print(f"SemSlot score: {semslot:.{OUTPUT_PRECISION}f}")
     print(f"SemClass score: {semclass:.{OUTPUT_PRECISION}f}")
 

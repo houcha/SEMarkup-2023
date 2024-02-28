@@ -103,6 +103,11 @@ class SEMarkupScorer:
         assert 0. <= score <= 1.
         return score
 
+    def score_misc(self, test: SemarkupToken, gold: SemarkupToken) -> float:
+        score = test.misc == gold.misc
+        assert 0. <= score <= 1.
+        return score
+
     def score_semslot(self, test: SemarkupToken, gold: SemarkupToken) -> float:
         score = test.semslot == gold.semslot
         assert 0. <= score <= 1.
@@ -149,6 +154,8 @@ class SEMarkupScorer:
         deprel_scores = []
         # Extended LAS
         deps_scores = []
+        # Misc
+        misc_scores = []
         # Semantic scores.
         semslot_scores = []
         semclass_scores = []
@@ -192,6 +199,7 @@ class SEMarkupScorer:
                 head_score = self.score_head(test_token, gold_token) if not is_mismatched else 0.
                 deprel_score = self.score_deprel(test_token, gold_token) if not is_mismatched else 0.
                 deps_score = self.score_deps(test_token, gold_token) if not is_mismatched else 0.
+                misc_score = self.score_misc(test_token, gold_token) if not is_mismatched else 0.
                 semslot_score = self.score_semslot(test_token, gold_token) if not is_mismatched else 0.
                 semclass_score = self.score_semclass(test_token, gold_token) if not is_mismatched else 0.
 
@@ -203,6 +211,7 @@ class SEMarkupScorer:
                 head_scores.append(head_score)
                 deprel_scores.append(deprel_score)
                 deps_scores.append(deps_score)
+                misc_scores.append(misc_score)
                 semslot_scores.append(semslot_score)
                 semclass_scores.append(semclass_score)
 
@@ -221,6 +230,7 @@ class SEMarkupScorer:
         head_avg_score = np.mean(head_scores)
         deprel_avg_score = np.mean(deprel_scores)
         deps_avg_score = np.mean(deps_scores)
+        misc_avg_score = np.mean(misc_scores)
         semslot_avg_score = np.mean(semslot_scores)
         semclass_avg_score = np.mean(semclass_scores)
 
@@ -231,6 +241,7 @@ class SEMarkupScorer:
         assert 0. <= head_avg_score <= 1.
         assert 0. <= deprel_avg_score <= 1.
         assert 0. <= deps_avg_score <= 1.
+        assert 0. <= misc_avg_score <= 1.
         assert 0. <= semslot_avg_score <= 1.
         assert 0. <= semclass_avg_score <= 1.
 
@@ -242,6 +253,7 @@ class SEMarkupScorer:
             head_avg_score,
             deprel_avg_score,
             deps_avg_score,
+            misc_avg_score,
             semslot_avg_score,
             semclass_avg_score
         )

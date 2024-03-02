@@ -19,7 +19,7 @@ def preprocess(sentences: List[TokenList]) -> List[str]:
     for sentence in tqdm(sentences):
         tokens = []
         for token in sentence:
-            if type(token["id"]) is tuple and '-' in token["id"]:
+            if '-' in token["id"]:
                 continue
             deps = deepcopy(token["deps"])
             token["deps"] = dict()

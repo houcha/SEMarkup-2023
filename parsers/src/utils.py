@@ -3,7 +3,9 @@ from typing import Iterable, List, Dict, Optional
 import torch
 from torch import BoolTensor
 
-from .token import Token, EMPTY_TOKEN
+import sys
+sys.path.append("..")
+from common.token import Token
 
 
 def get_null_mask(sentences: List[List[Token]]) -> BoolTensor:

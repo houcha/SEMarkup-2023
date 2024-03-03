@@ -1,6 +1,6 @@
 import sys
-import numpy as np
 
+import numpy as np
 from tqdm import tqdm
 
 # zip `strict` is only available starting Python 3.10.
@@ -9,7 +9,10 @@ from more_itertools import zip_equal
 from typing import Iterable, List, Tuple, Dict, Optional
 
 from scorer.taxonomy import Taxonomy
-from semarkup import Sentence, SemarkupToken, EMPTY_TOKEN
+
+sys.path.append("..") # import 'common' package
+from common.token import Token
+from common.sentence import Sentence
 
 
 class SEMarkupScorer:
@@ -25,7 +28,10 @@ class SEMarkupScorer:
         self.lemma_weights = lemma_weights
         self.feats_weights = feats_weights
 
-    def score_lemma(self, test: SemarkupToken, gold: SemarkupToken) -> float:
+    def score_lemma(self, test: Token, gold: Token) -> float:
+        if test.lemma is None or gold.lemma is None:
+            return test.lemma is None and gold.lemma is None
+
         ignore_case_and_yo = lambda word: word.lower().replace('ё', 'е')
         score = ignore_case_and_yo(test.lemma) == ignore_case_and_yo(gold.lemma)
 
@@ -34,17 +40,20 @@ class SEMarkupScorer:
         assert 0. <= score <= 1.
         return score
 
-    def score_upos(self, test: SemarkupToken, gold: SemarkupToken) -> float:
+    def score_upos(self, test: Token, gold: Token) -> float:
         score = test.upos == gold.upos
         assert 0. <= score <= 1.
         return score
 
-    def score_xpos(self, test: SemarkupToken, gold: SemarkupToken) -> float:
+    def score_xpos(self, test: Token, gold: Token) -> float:
         score = test.xpos == gold.xpos
         assert 0. <= score <= 1.
         return score
 
-    def score_feats(self, test: SemarkupToken, gold: SemarkupToken) -> float:
+    def score_feats(self, test: Token, gold: Token) -> float:
+        if test.feats is None or gold.feats is None:
+            return test.feats is None and gold.feats is None
+
         correct_feats_weighted_sum = np.sum([
             (self.feats_weights[gram_cat] if self.feats_weights is not None else 1)
             * (gold.feats[gram_cat] == test.feats[gram_cat])
@@ -78,17 +87,20 @@ class SEMarkupScorer:
         assert 0. <= score <= 1.
         return score
 
-    def score_head(self, test: SemarkupToken, gold: SemarkupToken) -> float:
+    def score_head(self, test: Token, gold: Token) -> float:
         score = test.head == gold.head
         assert 0. <= score <= 1.
         return score
 
-    def score_deprel(self, test: SemarkupToken, gold: SemarkupToken) -> float:
+    def score_deprel(self, test: Token, gold: Token) -> float:
         score = (test.head == gold.head) and (test.deprel == gold.deprel)
         assert 0. <= score <= 1.
         return score
 
-    def score_deps(self, test: SemarkupToken, gold: SemarkupToken) -> float:
+    def score_deps(self, test: Token, gold: Token) -> float:
+        if test.deps is None or gold.deps is None:
+            return test.deps is None and gold.deps is None
+
         assert type(test.deps) is dict and type(gold.deps) is dict
 
         items_to_pairs = lambda deps: [(head, rel) for head, rels in deps.items() for rel in rels]
@@ -103,17 +115,17 @@ class SEMarkupScorer:
         assert 0. <= score <= 1.
         return score
 
-    def score_misc(self, test: SemarkupToken, gold: SemarkupToken) -> float:
+    def score_misc(self, test: Token, gold: Token) -> float:
         score = test.misc == gold.misc
         assert 0. <= score <= 1.
         return score
 
-    def score_semslot(self, test: SemarkupToken, gold: SemarkupToken) -> float:
+    def score_semslot(self, test: Token, gold: Token) -> float:
         score = test.semslot == gold.semslot
         assert 0. <= score <= 1.
         return score
 
-    def score_semclass(self, test: SemarkupToken, gold: SemarkupToken) -> float:
+    def score_semclass(self, test: Token, gold: Token) -> float:
         score = test.semclass == gold.semclass
 
         # FIXME: Is hierarchy available now?
@@ -180,12 +192,15 @@ class SEMarkupScorer:
 
             # Test and gold sentence lengths may be different due to #NULL tokens.
             # If it is the case, insert extra "empty" tokens so that real tokens have same index in both senteces.
-            test_tokens_aligned, gold_sentence_aligned = self._align_sentences(test_sentence, gold_sentence)
-            assert len(test_tokens_aligned) == len(gold_sentence_aligned)
+            test_sentence_aligned, gold_sentence_aligned = self._align_sentences(test_sentence, gold_sentence)
+            assert len(test_sentence_aligned) == len(gold_sentence_aligned)
 
-            #print([t.form for t in test_tokens_aligned], [t.form for t in gold_sentence_aligned])
+            #print("\n\n")
+            #print(f"sent_id: {test_sentence.sent_id}")
+            #print(f"test: {test_sentence_aligned.serialize()}")
+            #print(f"gold: {gold_sentence_aligned.serialize()}")
 
-            for test_token, gold_token in zip_equal(test_tokens_aligned, gold_sentence_aligned):
+            for test_token, gold_token in zip_equal(test_sentence_aligned, gold_sentence_aligned):
                 is_mismatched = test_token.is_empty() or gold_token.is_empty()
 
                 assert test_token.form == gold_token.form or is_mismatched, \
@@ -258,9 +273,9 @@ class SEMarkupScorer:
             semclass_avg_score
         )
 
-    def _align_sentences(self, sentence1: List[SemarkupToken], sentence2: List[SemarkupToken]):
+    def _align_sentences(self, sentence1: Sentence, sentence2: Sentence):
         """
-        Aligns two sequences of tokens. EMPTY_TOKEN is inserted where needed.
+        Aligns two sequences of tokens. Empty token is inserted where needed.
         Example:
         >>> true_tokens = [ "How", "did", "this", "#NULL", "happen"]
         >>> pred_tokens = [ "How", "#NULL", "did", "this", "happen"]
@@ -268,26 +283,27 @@ class SEMarkupScorer:
         ['How', '#EMPTY', 'did', 'this',  '#NULL', 'happen'],
         ['How',  '#NULL', 'did', 'this', '#EMPTY', 'happen']
         """
-        sentence1_aligned, sentence2_aligned  = [], []
+        tokens1_aligned, tokens2_aligned = [], []
 
         i, j = 0, 0
         while i < len(sentence1) and j < len(sentence2):
             if sentence1[i].form == sentence2[j].form:
-                sentence1_aligned.append(sentence1[i])
-                sentence2_aligned.append(sentence2[j])
+                tokens1_aligned.append(sentence1[i])
+                tokens2_aligned.append(sentence2[j])
                 i += 1
                 j += 1
             else:
                 if sentence1[i].is_null():
-                    sentence1_aligned.append(sentence1[i])
-                    sentence2_aligned.append(EMPTY_TOKEN)
+                    tokens1_aligned.append(sentence1[i])
+                    tokens2_aligned.append(Token.create_empty(id=f"{i}.1"))
                     i += 1
                 else:
                     assert sentence2[j].is_null()
-                    sentence1_aligned.append(EMPTY_TOKEN)
-                    sentence2_aligned.append(sentence2[j])
+                    tokens1_aligned.append(Token.create_empty(id=f"{i}.1"))
+                    tokens2_aligned.append(sentence2[j])
                     j += 1
-        return sentence1_aligned, sentence2_aligned
+
+        return Sentence(tokens1_aligned, sentence1.metadata), Sentence(tokens2_aligned, sentence2.metadata)
 
 # TODO: Unit Tests
 

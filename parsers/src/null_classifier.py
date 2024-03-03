@@ -14,7 +14,10 @@ from allennlp.nn.util import get_text_field_mask, move_to_device, get_device_of,
 from allennlp.models import Model
 from allennlp.training.metrics import CategoricalAccuracy, F1Measure
 
-from .token import Token, CLS_TOKEN
+import sys
+sys.path.append("..")
+from common.token import Token, CLS_TOKEN
+
 from .feedforward_classifier import FeedForwardClassifier
 
 

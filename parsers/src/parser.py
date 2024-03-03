@@ -15,7 +15,10 @@ from allennlp.models import Model
 from allennlp.modules.token_embedders.token_embedder import TokenEmbedder
 from allennlp.data.token_indexers import TokenIndexer
 
-from .token import Token
+import sys
+sys.path.append("..")
+from common.token import Token
+
 from .feedforward_classifier import FeedForwardClassifier
 from .lemma_classifier import LemmaClassifier
 from .lemmatize_helper import LemmaRule, predict_lemma_from_rule

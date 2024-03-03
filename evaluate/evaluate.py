@@ -8,7 +8,7 @@ import numpy as np
 from typing import Dict, Tuple
 
 from scorer.scorer import SEMarkupScorer
-from semarkup import parse_semarkup
+from common.parse_conllu import parse_conllu_incr
 
 
 OUTPUT_PRECISION = 4
@@ -45,8 +45,8 @@ def main(
 
     print("Evaluate...")
     with open(test_file_path, 'r') as test_file, open(gold_file_path, 'r') as gold_file:
-        test_sentences = parse_semarkup(test_file, incr=True)
-        gold_sentences = parse_semarkup(gold_file, incr=True)
+        test_sentences = parse_conllu_incr(test_file)
+        gold_sentences = parse_conllu_incr(gold_file)
         scores = scorer.score_sentences(test_sentences, gold_sentences)
 
     # Exit on errors.

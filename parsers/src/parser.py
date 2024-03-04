@@ -251,6 +251,9 @@ class MorphoSyntaxSemanticParser(Model):
             feats_tags.append(feats_tag)
 
         # Restore heads and deprels.
+        # Recall that syntactic nodes are renumerated so that [1, 1.1, 2] becomes [1, 2, 3].
+        # Now we want to bind them back to the actual tokens, i.e. renumerate [1, 2, 3] into [1, 1.1, 2].
+        # Luckily, we already have this mapping stored in 'ids'.
         heads = [None for _ in range(len(sentence))]
         deprels = [None for _ in range(len(sentence))]
         deprel_preds = output["deprel_preds"][:, 1:].tolist()
@@ -259,8 +262,8 @@ class MorphoSyntaxSemanticParser(Model):
             # Make sure heads are unique (have no collisions).
             assert heads[edge_to] is None
             assert deprels[edge_to] is None
-            # Renumerate nodes starting 1 (now 0) and replace self-loop with ROOT.
-            heads[edge_to] = edge_from + 1 if edge_from != edge_to else 0
+            # Renumerate nodes back to actual tokens' ids and replace self-loops with ROOT (0).
+            heads[edge_to] = ids[edge_from] if edge_from != edge_to else 0
             deprels[edge_to] = self.vocab.get_token_from_index(deprel_id, "deprel_labels")
 
         # Restore deps.
@@ -269,8 +272,8 @@ class MorphoSyntaxSemanticParser(Model):
         for edge in deps_preds:
             edge_to, edge_from, dep_id = edge
             dep = self.vocab.get_token_from_index(dep_id, "deps_labels")
-            # Renumerate nodes starting 1 (now 0) and replace self-loop with ROOT.
-            deps[edge_to].append(f"{edge_from + 1 if edge_from != edge_to else 0}:{dep}")
+            # Renumerate nodes back to actual tokens' ids and replace self-loops with ROOT (0).
+            deps[edge_to].append(f"{ids[edge_from] if edge_from != edge_to else 0}:{dep}")
         deps = ['|'.join(dep) if dep else '_' for dep in deps]
 
         # Restore miscs.
@@ -300,11 +303,12 @@ class MorphoSyntaxSemanticParser(Model):
 
         metadata = output["metadata"][0]
 
-        # Manually post-process null tags.
+        # Manually post-process nulls' tags.
         for i, token in enumerate(sentence):
             if token.is_null():
                 heads[i] = '_'
                 deprels[i] = '_'
+                miscs[i] = 'ellipsis'
 
         return {
             "ids": [ids],

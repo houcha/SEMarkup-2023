@@ -75,7 +75,7 @@ class ComprenoUDDatasetReader(DatasetReader):
 
         if upos_tags is not None and xpos_tags is not None and feats_tags is not None:
             joint_pos_feats = [
-                f"{upos_tag}#{xpos_tag}#{feats_tag}"
+                f"{upos_tag}#{xpos_tag}#" + '|'.join([f"{k}={v}" for k, v in feats_tag.items()])
                 for upos_tag, xpos_tag, feats_tag in zip(upos_tags, xpos_tags, feats_tags)
             ]
             fields['pos_feats_labels'] = SequenceLabelField(joint_pos_feats, text_field, 'pos_feats_labels')

@@ -1,11 +1,14 @@
-from conllu.models import Token, TokenList
-
 # from overrides import override
 from typing import Dict
 
 from allennlp.predictors.predictor import Predictor
 from allennlp.common.util import JsonDict
 from allennlp.data import Instance
+
+import sys
+sys.path.append("..")
+from common.token import Token
+from common.sentence import Sentence
 
 
 @Predictor.register("morpho_syntax_semantic_predictor")
@@ -17,6 +20,15 @@ class MorphoSyntaxSemanticPredictor(Predictor):
     # @override(check_signature=False)
     def dump_line(self, output: Dict[str, list]) -> str:
         metadata = output["metadata"]
+
+        lines = []
+        if metadata:
+            for key, value in metadata.items():
+                if value:
+                    line = f"# {key} = {value}"
+                else:
+                    line = f"# {key}"
+                lines.append(line)
 
         tags_iterator = zip(
             output["ids"],
@@ -32,25 +44,6 @@ class MorphoSyntaxSemanticPredictor(Predictor):
             output["semslots"],
             output["semclasses"],
         )
-
-        tokens = []
-        for tok_id, form, lemma, upos, xpos, feats, head, deprel, deps, misc, semslot, semclass in tags_iterator:
-            token = Token()
-            token["id"] = tok_id
-            token["form"] = form
-            token["lemma"] = lemma
-            token["upos"] = upos
-            token["xpos"] = xpos
-            token["feats"] = feats
-            token["head"] = head
-            token["deprel"] = deprel
-            token["deps"] = deps
-            token["miscs"] = misc
-            token["semslot"] = semslot
-            token["semclass"] = semclass
-            tokens.append(token)
-
-        sentence = TokenList(tokens, metadata)
-        serialized_sentence = sentence.serialize()
-        return serialized_sentence
+        lines.extend(['\t'.join(map(str, token_tags)) for token_tags in tags_iterator])
+        return '\n'.join(lines) + "\n\n"
 

@@ -15,10 +15,6 @@ class Sentence:
         """
         Create Sentence from TokenList.
         """
-        #for conllu_token in conllu_tokens:
-        #    print(conllu_token.keys())
-        #    print(Token(**conllu_token).serialize())
-            
         tokens = [Token(**conllu_token) for conllu_token in conllu_tokens]
         metadata = conllu_tokens.metadata
         return Sentence(tokens, metadata)

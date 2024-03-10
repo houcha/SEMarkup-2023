@@ -131,7 +131,7 @@ class Sentence:
             if token.deps is None:
                 # Special case when deps is empty.
                 continue
-            for head, rels in token.deps.items():
-                new_deps[old2new_id[str(head)]] = rels
+            for head, rel in token.deps.items():
+                new_deps[old2new_id[str(head)]] = rel
             token.deps = new_deps
 

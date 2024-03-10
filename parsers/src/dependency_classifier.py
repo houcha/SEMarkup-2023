@@ -72,8 +72,8 @@ class DependencyClassifier(Model):
     def forward(
         self,
         embeddings: Tensor,    # [batch_size, seq_len, embedding_dim]
-        deprel_labels: Tensor, # [batch_size, seq_len, seq_len, num_labels]
-        deps_labels: Tensor,   # [batch_size, seq_len, seq_len, num_labels_eud]
+        deprel_labels: Tensor, # [batch_size, seq_len, seq_len]
+        deps_labels: Tensor,   # [batch_size, seq_len, seq_len]
         mask_ud: Tensor,       # [batch_size, seq_len]
         mask_eud: Tensor       # [batch_size, seq_len]
     ) -> Dict[str, Tensor]:
@@ -110,9 +110,9 @@ class DependencyClassifier(Model):
             self.uas_eud(uas_eud)
             self.las_eud(las_eud)
 
-        pred_rels_ud = (pred_rels_ud * pred_arcs_ud[..., None]).nonzero()
+        pred_rels_ud = (pred_rels_ud * pred_arcs_ud).nonzero()
+        pred_rels_eud = (pred_rels_eud * pred_arcs_eud).nonzero()
         pred_arcs_ud = pred_arcs_ud.nonzero()
-        pred_rels_eud = (pred_rels_eud * pred_arcs_eud[..., None]).nonzero()
         pred_arcs_eud = pred_arcs_eud.nonzero()
 
         return {
@@ -157,20 +157,19 @@ class DependencyClassifier(Model):
         else:
             arcs, rels = self.mst_decode(s_arc, s_rel, mask)
 
-        # Select the most probable arcs.
+        # Convert sequence of heads (shape [batch_size, seq_len]) to arc matrix (shape [batch_size, seq_len, seq_len]).
         # [batch_size, seq_len, seq_len]
         pred_arcs = torch.zeros_like(s_arc, dtype=torch.long).scatter(-1, arcs.unsqueeze(-1), 1)
 
-        # Select the most probable rels for each arc.
-        # [batch_size, seq_len, seq_len, num_labels]
-        arcs_with_rels = pred_arcs.clone()
-        arcs_with_rels[pred_arcs == 1] = rels.flatten()
-        pred_rels = torch.zeros_like(s_rel, dtype=torch.long).scatter(-1, arcs_with_rels.unsqueeze(-1), 1)
+        # Convert sequence of rels (shape [batch_size, seq_len]) to rel matrix (shape [batch_size, seq_len, seq_len]).
+        # [batch_size, seq_len, seq_len]
+        pred_rels = pred_arcs.clone()
+        pred_rels[pred_arcs == 1] = rels.flatten()
 
         # Zero out padding.
         mask2d = self._mirror_mask(mask)
         pred_arcs = pred_arcs * mask2d
-        pred_rels = pred_rels * mask2d[..., None]
+        pred_rels = pred_rels * mask2d
 
         return pred_arcs, pred_rels
 
@@ -182,10 +181,12 @@ class DependencyClassifier(Model):
     ) -> Tuple[Tensor, Tensor]:
 
         pred_arcs, pred_rels = self.greedy_decode_sigmoid(s_arc, s_rel)
+
         # Zero out padding.
         mask2d = self._mirror_mask(mask)
         pred_arcs = pred_arcs * mask2d
-        pred_rels = pred_rels * mask2d[..., None]
+        pred_rels = pred_rels * mask2d
+
         return pred_arcs, pred_rels
 
     def greedy_decode_softmax(
@@ -217,9 +218,9 @@ class DependencyClassifier(Model):
         # [batch_size, seq_len, seq_len]
         pred_arcs = torch.sigmoid(s_arc).round().long()
 
-        # Select all probable rels for each arc.
-        # [batch_size, seq_len, seq_len, num_labels]
-        pred_rels = torch.sigmoid(s_rel).round().long()
+        # Select the most probable rel for each arc.
+        # [batch_size, seq_len, seq_len]
+        pred_rels = s_rel.argmax(-1)
 
         return pred_arcs, pred_rels
 
@@ -303,13 +304,13 @@ class DependencyClassifier(Model):
         self,
         s_arc: Tensor,  # [batch_size, seq_len, seq_len]
         s_rel: Tensor,  # [batch_size, seq_len, seq_len, num_labels]
-        target: Tensor, # [batch_size, seq_len, seq_len, num_labels]
+        target: Tensor, # [batch_size, seq_len, seq_len]
         is_multilabel: bool
     ) -> Tuple[Tensor, Tensor]:
 
         # has_arc_mask[:, i, j] = True iff target has edge at index [i, j].
         # [batch_size, seq_len, seq_len]
-        has_arc_mask = target.max(dim=-1).values != -1
+        has_arc_mask = target != -1
         # [batch_size, seq_len]
         mask = torch.any(has_arc_mask == True, dim=-1)
         # [batch_size, seq_len, seq_len]
@@ -319,12 +320,10 @@ class DependencyClassifier(Model):
             # [batch_size, seq_len]
             arc_losses = self.bce_loss(s_arc[mask], has_arc_mask[mask].float())
             arc_loss = arc_losses[mask2d[mask]].mean()
-            # [batch_size, seq_len]
-            rel_losses = self.bce_loss(s_rel[has_arc_mask], target[has_arc_mask].float())
-            rel_loss = rel_losses.mean()
         else:
             arc_loss = self.cross_entropy(s_arc[mask], has_arc_mask[mask].long().argmax(-1))
-            rel_loss = self.cross_entropy(s_rel[has_arc_mask], target[has_arc_mask].argmax(-1))
+
+        rel_loss = self.cross_entropy(s_rel[has_arc_mask], target[has_arc_mask])
 
         assert arc_loss != float("inf")
         assert rel_loss != float("inf")
@@ -333,26 +332,24 @@ class DependencyClassifier(Model):
     def calc_metric(
         self,
         pred_arcs: LongTensor,  # [batch_size, seq_len, seq_len]
-        pred_rels: LongTensor,  # [batch_size, seq_len, seq_len, num_labels]
-        target: LongTensor,     # [batch_size, seq_len, seq_len, num_labels]
+        pred_rels: LongTensor,  # [batch_size, seq_len, seq_len]
+        target: LongTensor,     # [batch_size, seq_len, seq_len]
     ):
-        # TODO: replace -1 with 0 and simplify
-
         # [batch_size, seq_len, seq_len]
-        has_arc_mask = target.max(dim=-1).values != -1
+        has_arc_mask = target != -1
         # [batch_size, seq_len]
         mask = torch.any(has_arc_mask == True, dim=-1)
         # [batch_size, seq_len, seq_len]
         mask2d = self._mirror_mask(mask)
         
-        # Multilabel UAS.
+        # Multi-UAS.
         target_arcs_idxs = has_arc_mask.nonzero()
         pred_arcs_idxs = (pred_arcs * mask2d).nonzero()
         uas = self._multilabel_attachment_score(pred_arcs_idxs, target_arcs_idxs)
 
-        # Multilabel LAS.
-        target_rels_idxs = (target * has_arc_mask[..., None]).nonzero()
-        pred_rels_idxs = (pred_rels * pred_arcs[..., None] * mask2d[..., None]).nonzero()
+        # Multi-LAS.
+        target_rels_idxs = (target * has_arc_mask).nonzero()
+        pred_rels_idxs = (pred_rels * pred_arcs * mask2d).nonzero()
         las = self._multilabel_attachment_score(pred_rels_idxs, target_rels_idxs)
 
         return uas, las

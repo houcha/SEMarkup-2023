@@ -46,8 +46,8 @@ def parse_head(value: str) -> Optional[int]:
 def parse_deps(value: str) -> Optional[Dict[str, List[str]]]:
     """
     Example:
-    >>> parse_deps("26:conj|26:nmod:on|18:advcl:while")
-    {'26': ['conj', 'nmod:on'], '18': ['advcl:while']}
+    >>> parse_deps("26:conj|18:advcl:while")
+    {'26': 'conj', '18': 'advcl:while'}
     """
 
     if not value:
@@ -59,11 +59,8 @@ def parse_deps(value: str) -> Optional[Dict[str, List[str]]]:
     deps = {}
     for dep in value.split('|'):
         head, rel = dep.split(':', 1)
-
-        if head not in deps:
-            deps[head] = []
-        deps[head].append(rel)
-
+        assert head not in deps, f"Multiedges are not allowed: {value}"
+        deps[head] = rel
     return deps
 
 
@@ -86,7 +83,7 @@ def parse_conllu_incr(file: TextIO) -> Iterable[Sentence]:
     assert not file.closed
     return map(Sentence.from_conllu, conllu.parse_incr(file, fields=FIELDS, field_parsers=FIELD_PARSERS))
 
-def write_semarkup(file_path: str, sentences: List[Sentence]) -> None:
+def write_conllu(file_path: str, sentences: List[Sentence]) -> None:
     sentences_serialized: List[str] = []
 
     for sentence in sentences:

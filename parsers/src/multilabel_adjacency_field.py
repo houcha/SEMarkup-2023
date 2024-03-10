@@ -11,9 +11,9 @@ from allennlp.common.checks import ConfigurationError
 class MultilabelAdjacencyField(Field[torch.Tensor]):
     def __init__(
         self,
-        indices: List[Tuple[int, int]],
         sequence_field: SequenceField,
-        labels: List[List[str]],
+        indices: List[Tuple[int, int]],
+        labels: List[str],
         label_namespace: str = "labels",
         padding_value: int = -1,
     ) -> None:
@@ -45,16 +45,12 @@ class MultilabelAdjacencyField(Field[torch.Tensor]):
 
     def count_vocab_items(self, counter: Dict[str, Dict[str, int]]):
         if self._labels_ids is None:
-            for labels in self.labels:
-                for label in labels:
-                    counter[self._label_namespace][label] += 1
+            for label in self.labels:
+                counter[self._label_namespace][label] += 1
 
     def index(self, vocab: Vocabulary):
         if self._labels_ids is None:
-            self._labels_ids = [
-                [vocab.get_token_index(label, self._label_namespace) for label in labels]
-                for labels in self.labels
-            ]
+            self._labels_ids = [vocab.get_token_index(label, self._label_namespace) for label in self.labels]
         if not self._num_labels:
             self._num_labels = vocab.get_vocab_size(self._label_namespace)
 
@@ -64,15 +60,12 @@ class MultilabelAdjacencyField(Field[torch.Tensor]):
     def as_tensor(self, padding_lengths: Dict[str, int]) -> torch.Tensor:
         seq_len = padding_lengths["num_tokens"]
         # Initialize all with padding value.
-        tensor = torch.full((seq_len, seq_len, self._num_labels), self._padding_value, dtype=torch.long)
+        matrix = torch.full((seq_len, seq_len), self._padding_value, dtype=torch.long)
         assert self._labels_ids is not None
-        # Assign 0s and 1s to the edges.
-        for index, label_ids in zip(self.indices, self._labels_ids):
-            # Zero out edges.
-            tensor[index] = torch.zeros(self._num_labels)
-            # Set 1s where labeled.
-            tensor[index].scatter_(0, torch.LongTensor(label_ids), 1)
-        return tensor
+        # Assign labels to edges.
+        for index, label_id in zip(self.indices, self._labels_ids):
+            matrix[index] = label_id
+        return matrix
 
     def empty_field(self) -> "MultilabelAdjacencyField":
 

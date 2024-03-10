@@ -40,16 +40,16 @@ class Token:
         elif self.head == -1:
             head = '_'
         else:
-            head = str(head)
+            head = str(self.head)
 
         # Custom serialization for 'deps' tag.
-        deps = ''
-        if self.deps:
-            dep_str_list = []
-            for head, rels in self.deps.items():
-                for rel in rels:
-                    dep_str_list.append(f"{head}:{rel}")
-            deps = '|'.join(dep_str_list)
+        if self.deps is None:
+            deps = ''
+        elif len(self.deps) == 0:
+            deps = '_'
+        else:
+            deps = '|'.join(f"{head}:{rel}" for head, rel in self.deps.items())
+
         return (
             f"{serialize_field(self.id)}\t"
             f"{serialize_field(self.form)}\t"

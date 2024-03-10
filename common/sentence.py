@@ -96,7 +96,7 @@ class Sentence:
                     line = f"# {key}"
                 lines.append(line)
 
-        lines = [token.serialize() for token in self._tokens]
+        lines += [token.serialize() for token in self._tokens]
         return '\n'.join(lines) + "\n\n"
 
     def _collect_field(self, field_type: str) -> Optional[List]:

@@ -66,6 +66,7 @@ def parse_deps(value: str) -> Optional[Dict[str, List[str]]]:
 
 FIELD_PARSERS = {
     "id": lambda line, i: line[i], # Do not split indexes like 1.1
+    "lemma": lambda line, i: parse_nullable_value(line[i]),
     "upos": lambda line, i: parse_nullable_value(line[i]), # Do not treat _ as None
     "xpos": lambda line, i: parse_nullable_value(line[i]), # Do not treat _ as None
     "feats": lambda line, i: parse_feats(line[i]),

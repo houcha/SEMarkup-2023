@@ -31,58 +31,58 @@ class Sentence:
 
     @property
     def ids(self) -> List[int]:
-        return self._collect_field("ids")
+        return self._collect_nullable_field("ids")
 
     @property
     def words(self) -> List[str]:
-        return self._collect_field("form")
+        return [token.form for token in self._tokens]
 
     @property
     def lemmas(self) -> Optional[List[str]]:
-        return self._collect_field("lemma")
+        return self._collect_nullable_field("lemma")
 
     @property
     def upos_tags(self) -> Optional[List[str]]:
-        return self._collect_field("upos")
+        return self._collect_nullable_field("upos")
 
     @property
     def xpos_tags(self) -> Optional[List[str]]:
-        return self._collect_field("xpos")
+        return self._collect_nullable_field("xpos")
 
     @property
     def feats(self) -> Optional[List[str]]:
-        return self._collect_field("feats")
+        return self._collect_nullable_field("feats")
 
     @property
     def heads(self) -> Optional[List[int]]:
-        return self._collect_field("head")
+        return self._collect_nullable_field("head")
 
     @property
     def deprels(self) -> Optional[List[str]]:
-        return self._collect_field("deprel")
+        return self._collect_nullable_field("deprel")
 
     @property
     def deps(self) -> Optional[List[Dict]]:
-        return self._collect_field("deps")
+        return self._collect_nullable_field("deps")
 
     @property
     def miscs(self) -> Optional[List[str]]:
-        return self._collect_field("misc")
+        return self._collect_nullable_field("misc")
 
     @property
     def semslots(self) -> Optional[List[str]]:
-        return self._collect_field("semslot")
+        return self._collect_nullable_field("semslot")
 
     @property
     def semclasses(self) -> Optional[List[str]]:
-        return self._collect_field("semclass")
+        return self._collect_nullable_field("semclass")
 
     @property
     def metadata(self) -> Dict:
         return self._metadata
 
     @property
-    def sent_id(self) -> int:
+    def sent_id(self) -> str:
         return self._metadata["sent_id"]
 
     def serialize(self) -> str:
@@ -99,7 +99,7 @@ class Sentence:
         lines += [token.serialize() for token in self._tokens]
         return '\n'.join(lines) + "\n\n"
 
-    def _collect_field(self, field_type: str) -> Optional[List]:
+    def _collect_nullable_field(self, field_type: str) -> Optional[List]:
         field_values = [getattr(token, field_type) for token in self._tokens]
 
         # If all fields are None, return None (=no reference labels).

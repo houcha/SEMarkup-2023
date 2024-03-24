@@ -101,10 +101,6 @@ class Sentence:
 
     def _collect_nullable_field(self, field_type: str) -> Optional[List]:
         field_values = [getattr(token, field_type) for token in self._tokens]
-
-        # If all fields are None, return None (=no reference labels).
-        if all(field is None for field in field_values):
-            return None
         return field_values
 
     @staticmethod

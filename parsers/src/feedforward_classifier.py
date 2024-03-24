@@ -23,7 +23,8 @@ class FeedForwardClassifier(Model):
         hid_dim: int,
         n_classes: int,
         activation: str,
-        dropout: float
+        dropout: float,
+        ignore_index: int = -100,
     ):
         super().__init__(vocab)
 
@@ -34,7 +35,8 @@ class FeedForwardClassifier(Model):
             nn.Dropout(dropout),
             nn.Linear(hid_dim, n_classes)
         )
-        self.criterion = nn.CrossEntropyLoss()
+        self.criterion = nn.CrossEntropyLoss(ignore_index=ignore_index)
+        self.ignore_index = ignore_index
         self.accuracy = CategoricalAccuracy()
 
     # @override(check_signature=False)
@@ -59,10 +61,12 @@ class FeedForwardClassifier(Model):
         return self.criterion(logits[mask], labels[mask])
 
     def update_metrics(self, logits: Tensor, labels: Tensor, mask: Tensor):
-        self.accuracy(logits, labels, mask)
+        # Unlike CrossEntropyLoss, CategoricalAccuracy has no 'ignore_index' option,
+        # so mask @@NONE@@ tags manually.
+        ignore_mask = (labels != self.ignore_index)
+        self.accuracy(logits, labels, mask & ignore_mask)
 
     # @override
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
         return {"Accuracy": self.accuracy.get_metric(reset)}
-
 

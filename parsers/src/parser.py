@@ -19,6 +19,7 @@ import sys
 sys.path.append("..")
 from common.token import Token
 
+from .dataset_reader import NO_LEMMA_TOKEN, NO_FEATS_TOKEN, NO_MISC_TOKEN, NO_SEMSLOT_TOKEN, NO_SEMCLASS_TOKEN
 from .feedforward_classifier import FeedForwardClassifier
 from .lemma_classifier import LemmaClassifier
 from .lemmatize_helper import LemmaRule, predict_lemma_from_rule
@@ -58,10 +59,12 @@ class MorphoSyntaxSemanticParser(Model):
         self.lemma_rule_classifier = lemma_rule_classifier.construct(
             in_dim=embedding_dim,
             n_classes=vocab.get_vocab_size("lemma_rule_labels"),
+            ignore_index=vocab.get_token_index(NO_LEMMA_TOKEN, "lemma_rule_labels")
         )
         self.pos_feats_classifier = pos_feats_classifier.construct(
             in_dim=embedding_dim,
             n_classes=vocab.get_vocab_size("pos_feats_labels"),
+            ignore_index=vocab.get_token_index(NO_FEATS_TOKEN, "pos_feats_labels")
         )
         self.dependency_classifier = depencency_classifier.construct(
             in_dim=embedding_dim,
@@ -71,14 +74,17 @@ class MorphoSyntaxSemanticParser(Model):
         self.misc_classifier = misc_classifier.construct(
             in_dim=embedding_dim,
             n_classes=vocab.get_vocab_size("misc_labels"),
+            ignore_index=vocab.get_token_index(NO_FEATS_TOKEN, "misc_labels")
         )
         self.semslot_classifier = semslot_classifier.construct(
             in_dim=embedding_dim,
             n_classes=vocab.get_vocab_size("semslot_labels"),
+            ignore_index=vocab.get_token_index(NO_SEMSLOT_TOKEN, "semslot_labels")
         )
         self.semclass_classifier = semclass_classifier.construct(
             in_dim=embedding_dim,
             n_classes=vocab.get_vocab_size("semclass_labels"),
+            ignore_index=vocab.get_token_index(NO_SEMCLASS_TOKEN, "semclass_labels")
         )
         self.null_classifier = null_classifier.construct(
             indexer=indexer,

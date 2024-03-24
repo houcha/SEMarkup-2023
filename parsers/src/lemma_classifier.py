@@ -30,10 +30,11 @@ class LemmaClassifier(FeedForwardClassifier):
         n_classes: int,
         activation: str,
         dropout: float,
+        ignore_index: int = -100,
         dictionaries: List[Dict[str, str]] = [],
         topk: int = None
     ):
-        super().__init__(vocab, in_dim, hid_dim, n_classes, activation, dropout)
+        super().__init__(vocab, in_dim, hid_dim, n_classes, activation, dropout, ignore_index)
 
         self.dictionary = set()
         for dictionary_info in dictionaries:

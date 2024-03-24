@@ -17,13 +17,6 @@ from common.parse_conllu import parse_conllu_incr
 from .lemmatize_helper import predict_lemma_rule
 from .multilabel_adjacency_field import MultilabelAdjacencyField
 
-# Replace None values with special tokens, because some tokens' tags may not be present.
-NO_LEMMA_TOKEN = "@@NONE@@"
-NO_FEATS_TOKEN = "@@NONE@@"
-NO_MISC_TOKEN = "@@NONE@@"
-NO_SEMSLOT_TOKEN = "@@NONE@@"
-NO_SEMCLASS_TOKEN = "@@NONE@@"
-
 
 @DatasetReader.register("compreno_ud_dataset_reader")
 class ComprenoUDDatasetReader(DatasetReader):
@@ -77,13 +70,12 @@ class ComprenoUDDatasetReader(DatasetReader):
         fields['sentences'] = MetadataField(tokens)
 
         if lemmas is not None:
-            lemma_rules = [str(predict_lemma_rule(word, lemma)) if lemma is not None else NO_LEMMA_TOKEN for word, lemma in zip(words, lemmas)]
+            lemma_rules = [str(predict_lemma_rule(word, lemma)) for word, lemma in zip(words, lemmas)]
             fields['lemma_rule_labels'] = SequenceLabelField(lemma_rules, text_field, 'lemma_rule_labels')
 
         if upos_tags is not None and xpos_tags is not None and feats_tags is not None:
             joint_pos_feats = [
                 f"{upos_tag}#{xpos_tag}#" + '|'.join([f"{k}={v}" for k, v in feats_tag.items()])
-                if upos_tag is not None and xpos_tag is not None and feats_tag is not None else NO_FEATS_TOKEN
                 for upos_tag, xpos_tag, feats_tag in zip(upos_tags, xpos_tags, feats_tags)
             ]
             fields['pos_feats_labels'] = SequenceLabelField(joint_pos_feats, text_field, 'pos_feats_labels')
@@ -131,16 +123,13 @@ class ComprenoUDDatasetReader(DatasetReader):
             fields['deps_labels'] = MultilabelAdjacencyField(text_field, edges, edges_labels, 'deps_labels')
 
         if miscs is not None:
-            miscs_extended = [misc if misc is not None else NO_MISC_TOKEN for misc in miscs]
-            fields['misc_labels'] = SequenceLabelField(miscs_extended, text_field, 'misc_labels')
+            fields['misc_labels'] = SequenceLabelField(miscs, text_field, 'misc_labels')
 
         if semslots is not None:
-            semslots_extended = [semslot if semslot is not None else NO_SEMSLOT_TOKEN for semslot in semslots]
-            fields['semslot_labels'] = SequenceLabelField(semslots_extended, text_field, 'semslot_labels')
+            fields['semslot_labels'] = SequenceLabelField(semslots, text_field, 'semslot_labels')
 
         if semclasses is not None:
-            semclasses_extended = [semclass if semclass is not None else NO_SEMCLASS_TOKEN for semclass in semclasses]
-            fields['semclass_labels'] = SequenceLabelField(semclasses_extended, text_field, 'semclass_labels')
+            fields['semclass_labels'] = SequenceLabelField(semclasses, text_field, 'semclass_labels')
 
         if metadata is not None:
             fields['metadata'] = MetadataField(metadata)

@@ -25,12 +25,8 @@
         "min_count": {
             "lemma_rule_labels": 2 # Ignore lemmatization rules encountered 1 time in training dataset.
         },
-        "tokens_to_add": { # Add OOV and None-replacement tokens.
-            "lemma_rule_labels": ["@@UNKNOWN@@", "@@NONE@@"],
-            "pos_feats_labels": ["@@NONE@@"],
-            "misc_labels": ["@@NONE@@"],
-            "semslot_labels": ["@@NONE@@"],
-            "semclass_labels": ["@@NONE@@"]
+        "tokens_to_add": { # Add default OOV tokens.
+            "lemma_rule_labels": ["@@UNKNOWN@@"],
         }
     },
     "model": {

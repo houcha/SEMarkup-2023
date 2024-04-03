@@ -1,6 +1,6 @@
 from typing import Dict, Union
 
-from conllu.serializer import serialize_field
+import conllu
 
 
 class Token:
@@ -33,6 +33,8 @@ class Token:
         self.semclass = semclass
 
     def serialize(self) -> str:
+        serialize_field = lambda x: conllu.serializer.serialize_field(x) if x is not None else ''
+
         # Custom serialization for 'head' tag.
         head = None
         if self.head is None:
@@ -48,7 +50,7 @@ class Token:
         elif len(self.deps) == 0:
             deps = '_'
         else:
-            deps = '|'.join(f"{head}:{rel}" for head, rel in self.deps.items())
+            deps = '|'.join(f"{head}:{rel}" for head, rels in self.deps.items() for rel in rels)
 
         return (
             f"{serialize_field(self.id)}\t"

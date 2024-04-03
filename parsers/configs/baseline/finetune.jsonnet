@@ -1,8 +1,7 @@
-# Configuration file for baseline model.
-# See https://guide.allennlp.org/training-and-prediction#2 for guidance.
+# Configuration file for baseline model finetuning (it must be pretrained using baseline_pretrain.jsonnet config first!).
 {
-    "train_data_path": "data/train.conllu",
-    "validation_data_path": "data/validation.conllu",
+    "train_data_path": "data/train_small_no_multiedges.conllu",
+    "validation_data_path": "data/validation_small_no_multiedges.conllu",
     "dataset_reader": {
         "type": "compreno_ud_dataset_reader", # Use custom dataset reader.
         "token_indexers": {
@@ -14,68 +13,20 @@
         },
     },
     "data_loader": {
-        "batch_size": 64,
+        "batch_size": 16,
         "shuffle": true
     },
     "validation_data_loader": {
-        "batch_size": 64,
+        "batch_size": 16,
         "shuffle": false
     },
     "vocabulary": {
-        "min_count": {
-            "lemma_rule_labels": 2 # Ignore lemmatization rules encountered 1 time in training dataset.
-        },
-        "tokens_to_add": { # Add default OOV tokens.
-            "lemma_rule_labels": ["@@UNKNOWN@@"],
-        }
+        "type": "from_files",
+        "directory": "serialization/pretrained/vocabulary",
     },
     "model": {
-        "type": "morpho_syntax_semantic_parser", # Use custom model.
-	# FIXME: take indexer from dataset_reader
-        "indexer": {
-	    "type": "pretrained_transformer_mismatched",
-	    "model_name": "cointegrated/rubert-tiny"
-        },
-        "embedder": {
-            "type": "pretrained_transformer_mismatched",
-            "model_name": "cointegrated/rubert-tiny",
-            "train_parameters": true
-        },
-        "lemma_rule_classifier": {
-            "hid_dim": 512,
-            "activation": "relu",
-            "dropout": 0.1,
-        },
-        "pos_feats_classifier": {
-            "hid_dim": 256,
-            "activation": "relu",
-            "dropout": 0.1
-        },
-        "depencency_classifier": {
-            "hid_dim": 128,
-            "activation": "relu",
-            "dropout": 0.1
-        },
-        "misc_classifier": {
-            "hid_dim": 128,
-            "activation": "relu",
-            "dropout": 0.1
-        },
-        "semslot_classifier": {
-            "hid_dim": 1024,
-            "activation": "relu",
-            "dropout": 0.1
-        },
-        "semclass_classifier": {
-            "hid_dim": 1024,
-            "activation": "relu",
-            "dropout": 0.1
-        },
-        "null_classifier": {
-            "hid_dim": 512,
-            "activation": "relu",
-            "dropout": 0.1
-        }
+	"type": "from_archive",
+	"archive_file": "serialization/pretrained/model.tar.gz"
     },
     "trainer": {
         "type": "gradient_descent",
@@ -114,7 +65,7 @@
                 "should_log_learning_rate": true,
             }
         ],
-        "num_epochs": 30,
+        "num_epochs": 5,
         "validation_metric": "+Avg", # Track average score of all scores. '+' stands for 'higher - better'.
         "grad_clipping": 5.0, # Clip gradient if too high.
         "cuda_device": 0, # GPU

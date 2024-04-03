@@ -106,7 +106,7 @@ class ComprenoUDDatasetReader(DatasetReader):
             edges: List[Typle[int, int]] = []
             edges_labels: List[str] = []
             for index, token_deps in enumerate(deps):
-                for head, relation in token_deps.items():
+                for head, relations in token_deps.items():
                     assert 0 <= head
                     # Hack: start indexing at 0 and replace ROOT with self-loop.
                     # It makes parser implementation much easier.
@@ -119,6 +119,8 @@ class ComprenoUDDatasetReader(DatasetReader):
                         assert head != index, f"head = {head + 1} must not be equal to index = {index + 1}"
                     edge = (index, head)
                     edges.append(edge)
+                    assert len(relations) == 1, f"Multiedges are not allowed: {deps}, metadata: {metadata}"
+                    relation = relations[0]
                     edges_labels.append(relation)
             fields['deps_labels'] = MultilabelAdjacencyField(text_field, edges, edges_labels, 'deps_labels')
 

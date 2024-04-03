@@ -59,8 +59,9 @@ def parse_deps(value: str) -> Optional[Dict[str, List[str]]]:
     deps = {}
     for dep in value.split('|'):
         head, rel = dep.split(':', 1)
-        assert head not in deps, f"Multiedges are not allowed: {value}"
-        deps[head] = rel
+        if head not in deps:
+            deps[head] = []
+        deps[head].append(rel)
     return deps
 
 
@@ -75,10 +76,11 @@ FIELD_PARSERS = {
     "misc": lambda line, i: parse_nullable_value(line[i])
 }
 
+def parse_conllu_raw(file: TextIO) -> List[conllu.models.TokenList]:
+    return conllu.parse(file.read(), fields=FIELDS, field_parsers=FIELD_PARSERS)
 
 def parse_conllu(file: TextIO) -> List[Sentence]:
-    token_lists = conllu.parse(file.read(), fields=FIELDS, field_parsers=FIELD_PARSERS)
-    return list(map(Sentence.from_conllu, token_lists))
+    return list(map(Sentence.from_conllu, parse_conllu_raw(file)))
 
 def parse_conllu_incr(file: TextIO) -> Iterable[Sentence]:
     assert not file.closed

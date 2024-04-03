@@ -1,54 +1,41 @@
 #!/usr/bin/env python3
 
 import sys
-import json
 import argparse
 from copy import deepcopy
-from conllu.models import TokenList, Token
 
 from tqdm import tqdm
 
 from typing import Dict, Iterable, List
+from conllu.models import TokenList
 
-sys.path.append('../../evaluate')
-from semarkup import parse_semarkup, write_semarkup, Sentence
+sys.path.append('../..')
+from common.parse_conllu import parse_conllu_raw, write_conllu
+from common.sentence import Sentence, Token
 
 
-def preprocess(sentences: List[TokenList]) -> List[str]:
-    serialized_sentences = []
-    for sentence in tqdm(sentences):
+def preprocess(token_lists: List[TokenList]) -> List[Sentence]:
+    processed_sentences = []
+    for token_list in tqdm(token_lists):
         tokens = []
-        for token in sentence:
+        for token in token_list:
+            # Skip range tokens.
             if '-' in token["id"]:
                 continue
-            deps = deepcopy(token["deps"])
-            token["deps"] = dict()
-            for head, rels in deps.items():
-                try:
-                    a, b = head.split('-')
-                    head = a
-                except:
-                    pass
-                token["deps"][head] = rels
-            tokens.append(token)
-
-        preprocessed_sentence = Sentence(TokenList(tokens, sentence.metadata))
-        serialized_sentence = preprocessed_sentence.serialize()
-        serialized_sentences.append(serialized_sentence)
-    return serialized_sentences
+            tokens.append(Token(**token))
+        processed_sentences.append(Sentence(tokens, token_list.metadata))
+    return processed_sentences
 
 
 def main(input_file_path: str, output_file_path: str) -> None:
     print(f"Load sentences...")
     with open(input_file_path, "r", encoding='utf8') as input_file:
-        sentences = parse_semarkup(input_file, incr=False)
-
+        # Use parse_conllu_raw, because it preserves tags as-is (e.g. doesn't renumerate tokens' ids)
+        token_lists = parse_conllu_raw(input_file)
     print("Processing...")
-    preprocessed_sentences = preprocess(sentences)
-
+    preprocessed_sentences = preprocess(token_lists)
     print("Writing results")
-    with open(output_file_path, 'w') as output_file:
-        output_file.write(''.join(preprocessed_sentences))
+    write_conllu(output_file_path, preprocessed_sentences)
     print("Done.")
 
 
@@ -59,7 +46,7 @@ if __name__ == "__main__":
     parser.add_argument(
         'input_file',
         type=str,
-        help='SEMarkup file to preprocess.'
+        help='Conllu file to preprocess.'
     )
     parser.add_argument(
         'output_file',

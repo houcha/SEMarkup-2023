@@ -5,16 +5,16 @@ import argparse
 from random import shuffle
 
 from typing import List, Set
-from conllu.models import TokenList
 
 sys.path.append('../src')
 from lemmatize_helper import predict_lemma_rule
 
-sys.path.append('../../evaluate')
-from semarkup import parse_semarkup, write_semarkup
+sys.path.append('../..')
+from common.parse_conllu import parse_conllu, write_conllu
+from common.sentence import Sentence
 
 
-def build_cover_sentences(sentences: List[TokenList], tagsets_names: List[str]) -> Set[int]:
+def build_cover_sentences(sentences: List[Sentence], tagsets_names: List[str]) -> Set[int]:
     """
     Build a set of sentences such that every tag from `tagsets` tagsets has at least one occurrence.
     We use this to make sure training set contains all the tags of all tagsets.
@@ -26,7 +26,7 @@ def build_cover_sentences(sentences: List[TokenList], tagsets_names: List[str]) 
     for sentence in sentences:
         sentence_tagsets = dict()
         for tagset_name in tagsets_names:
-            sentence_tagsets[tagset_name] = {str(token[tagset_name]) for token in sentence}
+            sentence_tagsets[tagset_name] = {str(getattr(token, tagset_name)) for token in sentence}
             tagsets[tagset_name] |= sentence_tagsets[tagset_name]
         sentences_tagsets.append(sentence_tagsets)
 
@@ -72,7 +72,7 @@ def build_cover_sentences(sentences: List[TokenList], tagsets_names: List[str]) 
     return cover_sentences_indexes
 
 
-def train_val_split( sentences: List[TokenList], train_fraction: float, tagsets_names: List[str]) -> None:
+def train_val_split( sentences: List[Sentence], train_fraction: float, tagsets_names: List[str]) -> None:
     assert 0.0 < train_fraction < 1.0, "train_fraction must be in (0, 1) range."
     train_size = int(train_fraction * len(sentences))
 
@@ -110,10 +110,10 @@ def train_val_split( sentences: List[TokenList], train_fraction: float, tagsets_
     return train_sentences, val_sentences
 
 
-def print_dataset_statistic(sentences: List[TokenList], tagsets_names: List[str]):
+def print_dataset_statistic(sentences: List[Sentence], tagsets_names: List[str]):
     print(f"Number of sentences: {len(sentences)}")
     for tagset_name in tagsets_names:
-        tagset_size = len({token[tagset_name] for sentence in sentences for token in sentence})
+        tagset_size = len({getattr(token, tagset_name) for sentence in sentences for token in sentence})
         print(f"{tagset_name} tagset size: {tagset_size}")
 
 
@@ -146,17 +146,20 @@ if __name__ == "__main__":
 
     print("Loading sentences...")
     with open(args.dataset, 'r') as file:
-        sentences = parse_semarkup(file, incr=False)
+        token_lists = parse_conllu(file)
     # Modify tags.
-    for sentence in sentences:
-        for token in sentence:
-            token["lemma_rule"] = predict_lemma_rule(token["form"], token["lemma"])
-            token["upos&feats"] = token["upos"] + "&" + str(token["feats"])
+    for token_list in token_lists:
+        for token in token_list:
+            #print(token_list.metadata['sent_id'], token['id'], token['form'])
+            #token["lemma_rule"] = predict_lemma_rule(token["form"], token["lemma"]) if token["form"] else ""
+            #token["upos&feats"] = token["upos"] + "&" + str(token["feats"])
+            token.lemma_rule = predict_lemma_rule(token.form, token.lemma) if token.form else ""
+            token.upos_feats = token.upos + "&" + str(token.feats)
 
-    tagsets_names = ["lemma_rule", "upos&feats", "semslot", "semclass"]
+    tagsets_names = ["lemma_rule", "upos_feats", "semslot", "semclass"]
 
     print("Splitting...")
-    train_sentences, val_sentences = train_val_split(sentences, args.train_fraction, tagsets_names)
+    train_sentences, val_sentences = train_val_split(token_lists, args.train_fraction, tagsets_names)
 
     print()
     print("==============================")
@@ -178,6 +181,6 @@ if __name__ == "__main__":
     print("==============================")
     print()
 
-    write_semarkup(args.train_file, train_sentences)
-    write_semarkup(args.val_file, val_sentences)
+    write_conllu(args.train_file, train_sentences)
+    write_conllu(args.val_file, val_sentences)
 

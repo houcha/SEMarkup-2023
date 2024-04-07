@@ -20,19 +20,19 @@ def main(
 
     for sentence in tqdm(sentences):
         for token in sentence:
-            token.lemma = ""
-            token.upos = ""
-            token.xpos = ""
-            token.feats = ""
+            token.lemma = None
+            token.upos = None
+            token.xpos = None
+            token.feats = None
 
             if not keep_syntax:
-                token.head = ""
-                token.deprel = ""
-                token.deps = ""
+                token.head = None
+                token.deprel = None
+                token.deps = None
 
-            token.misc = ""
-            token.semslot = ""
-            token.semclass = ""
+            token.misc = None
+            token.semslot = None
+            token.semclass = None
     write_conllu(output_file_path, sentences)
 
 

@@ -6,13 +6,13 @@ allennlp build-vocab configs/build_target_vocab.jsonnet serialization/target_voc
     --force
 
 # Pretrain model on external datasets.
-allennlp train configs/baseline_pretrain.jsonnet \
+allennlp train configs/baseline/pretrain.jsonnet \
     --serialization-dir serialization/pretrained \
     --include-package src \
     --force 
 
 # Fine-tune pretrained model on target dataset.
-allennlp train configs/baseline_finetune.jsonnet \
+allennlp train configs/baseline/finetune.jsonnet \
     --serialization-dir serialization/finetuned \
     --include-package src \
     --force

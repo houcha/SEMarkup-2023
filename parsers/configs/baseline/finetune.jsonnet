@@ -1,7 +1,7 @@
 # Configuration file for baseline model finetuning (it must be pretrained using baseline_pretrain.jsonnet config first!).
 {
-    "train_data_path": "data/train_small_no_multiedges.conllu",
-    "validation_data_path": "data/validation_small_no_multiedges.conllu",
+    "train_data_path": "data/train.conllu",
+    "validation_data_path": "data/validation.conllu",
     "dataset_reader": {
         "type": "compreno_ud_dataset_reader", # Use custom dataset reader.
         "token_indexers": {
@@ -65,7 +65,7 @@
                 "should_log_learning_rate": true,
             }
         ],
-        "num_epochs": 5,
+        "num_epochs": 10,
         "validation_metric": "+Avg", # Track average score of all scores. '+' stands for 'higher - better'.
         "grad_clipping": 5.0, # Clip gradient if too high.
         "cuda_device": 0, # GPU

@@ -110,16 +110,12 @@ class DependencyClassifier(Model):
             self.uas_eud(uas_eud)
             self.las_eud(las_eud)
 
-        pred_rels_ud = (pred_rels_ud * pred_arcs_ud).nonzero()
-        pred_rels_eud = (pred_rels_eud * pred_arcs_eud).nonzero()
-        pred_arcs_ud = pred_arcs_ud.nonzero()
-        pred_arcs_eud = pred_arcs_eud.nonzero()
+        pred_edges_ud = self._extract_nonzero_edges(pred_arcs_ud, pred_rels_ud)
+        pred_edges_eud = self._extract_nonzero_edges(pred_arcs_eud, pred_rels_eud)
 
         return {
-            'arc_preds_ud': pred_arcs_ud,
-            'rel_preds_ud': pred_rels_ud,
-            'arc_preds_eud': pred_arcs_eud,
-            'rel_preds_eud': pred_rels_eud,
+            'syntax_ud': pred_edges_ud,
+            'syntax_eud': pred_edges_eud,
             'arc_loss_ud': arc_loss_ud,
             'rel_loss_ud': rel_loss_ud,
             'arc_loss_eud': arc_loss_eud,
@@ -407,3 +403,24 @@ class DependencyClassifier(Model):
         max_len = len(pred_labels) if len(pred_labels) > len(true_labels) else len(true_labels)
         return len(intersection) / max_len
 
+    @staticmethod
+    def _extract_nonzero_edges(
+        arcs: LongTensor, # [batch_size, seq_len, seq_len]
+        rels: LongTensor  # [batch_size, seq_len, seq_len]
+    ) -> LongTensor:
+        """
+        Aggregate arcs and relations into single array of tuples (batch_index, edge_to, edge_from, rel_id).
+        Works for both UD and E-UD matrices.
+        """
+        assert len(arcs.shape) == 3
+        assert arcs.shape == rels.shape
+
+        # [batch_size, seq_len, seq_len, num_classes]
+        rels_one_hot = F.one_hot(rels)
+        nonzero_arcs_positions = arcs.nonzero(as_tuple=True)
+        # Zero out all one-hots but ones present in nonzero_arcs_positions.
+        rels_filtered = torch.zeros_like(rels_one_hot)
+        rels_filtered[nonzero_arcs_positions] = rels_one_hot[nonzero_arcs_positions]
+        # Now rels_filtered has one-hot vector at [i, j, k] position iff i-th batch has (j, k) arc.
+        return rels_filtered.nonzero()
+        

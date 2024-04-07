@@ -147,9 +147,8 @@ class MorphoSyntaxSemanticParser(Model):
             'sentences': sentences_with_nulls,
             'lemma_rule_preds': lemma_rule['preds'],
             'pos_feats_preds': pos_feats['preds'],
-            'head_preds': syntax['arc_preds_ud'],
-            'deprel_preds': syntax['rel_preds_ud'],
-            'deps_preds': syntax['rel_preds_eud'],
+            'syntax_ud': syntax['syntax_ud'],
+            'syntax_eud': syntax['syntax_eud'],
             'misc_preds': misc['preds'],
             'semslot_preds': semslot['preds'],
             'semclass_preds': semclass['preds'],
@@ -213,19 +212,13 @@ class MorphoSyntaxSemanticParser(Model):
         sentence = sentences[0]
 
         # Restore ids.
-        ids = []
-        for token in sentence:
-            ids.append(token.id)
-
+        ids = [token.id for token in sentence]
         # Restore forms.
-        forms = []
-        for token in sentence:
-            forms.append(token.form)
+        forms = [token.form for token in sentence]
 
         # Restore lemmas.
         lemmas = []
-        lemma_rule_preds = output["lemma_rule_preds"].tolist()[0]
-        for token, lemma_rule_pred in zip(sentence, lemma_rule_preds):
+        for token, lemma_rule_pred in zip(sentence, output["lemma_rule_preds"].tolist()[0]):
             word = token.form
             lemma_rule_str = self.vocab.get_token_from_index(lemma_rule_pred, "lemma_rule_labels")
             if lemma_rule_str == DEFAULT_OOV_TOKEN:
@@ -239,8 +232,7 @@ class MorphoSyntaxSemanticParser(Model):
         upos_tags = []
         xpos_tags = []
         feats_tags = []
-        pos_feats_preds = output["pos_feats_preds"].tolist()[0]
-        for pos_feats_pred in pos_feats_preds:
+        for pos_feats_pred in output["pos_feats_preds"].tolist()[0]:
             pos_feats_str = self.vocab.get_token_from_index(pos_feats_pred, "pos_feats_labels")
             if pos_feats_str == DEFAULT_OOV_TOKEN:
                 upos_tag, xpos_tag, feats_tag = '_', '_', '_'
@@ -256,10 +248,8 @@ class MorphoSyntaxSemanticParser(Model):
         # Luckily, we already have this mapping stored in 'ids'.
         heads = [None for _ in range(len(sentence))]
         deprels = [None for _ in range(len(sentence))]
-        deprel_preds = output["deprel_preds"][:, 1:].tolist()
-        for edge in deprel_preds:
-            edge_to, edge_from, deprel_id = edge
-            # Make sure heads are unique (have no collisions).
+        for batch_index, edge_to, edge_from, deprel_id in output["syntax_ud"].tolist():
+            # Make sure UD-heads are unique (have no collisions).
             assert heads[edge_to] is None
             assert deprels[edge_to] is None
             # Renumerate nodes back to actual tokens' ids and replace self-loops with ROOT (0).
@@ -268,38 +258,27 @@ class MorphoSyntaxSemanticParser(Model):
 
         # Restore deps.
         deps = [[] for _ in range(len(sentence))]
-        deps_preds = output["deps_preds"][:, 1:].tolist()
-        for edge in deps_preds:
-            edge_to, edge_from, dep_id = edge
+        for batch_index, edge_to, edge_from, dep_id in output["syntax_eud"].tolist():
             dep = self.vocab.get_token_from_index(dep_id, "deps_labels")
             # Renumerate nodes back to actual tokens' ids and replace self-loops with ROOT (0).
             deps[edge_to].append(f"{ids[edge_from] if edge_from != edge_to else 0}:{dep}")
         deps = ['|'.join(dep) if dep else '_' for dep in deps]
 
         # Restore miscs.
-        miscs = []
-        miscs_preds = output["misc_preds"].tolist()[0]
-        for misc_pred in miscs_preds:
-            misc = self.vocab.get_token_from_index(misc_pred, "misc_labels")
-            miscs.append(misc)
+        misc_preds = output["misc_preds"].tolist()[0]
+        miscs = [self.vocab.get_token_from_index(misc, "misc_labels") for misc in misc_preds]
 
         # Restore semslots.
-        semslots = []
         semslot_preds = output["semslot_preds"].tolist()[0]
-        for semslot_pred in semslot_preds:
-            semslot = self.vocab.get_token_from_index(semslot_pred, "semslot_labels")
-            if semslot == DEFAULT_OOV_TOKEN:
-                semslots = '_'
-            semslots.append(semslot)
+        semslots = [self.vocab.get_token_from_index(semslot, "semslot_labels")
+                    if semslot != DEFAULT_OOV_TOKEN else '_'
+                    for semslot in semslot_preds]
 
         # Restore semclasses.
-        semclasses = []
         semclass_preds = output["semclass_preds"].tolist()[0]
-        for semclass_pred in semclass_preds:
-            semclass = self.vocab.get_token_from_index(semclass_pred, "semclass_labels")
-            if semclass == DEFAULT_OOV_TOKEN:
-                semclasss = '_'
-            semclasses.append(semclass)
+        semclasses = [self.vocab.get_token_from_index(semclass, "semclass_labels")
+                      if semclass != DEFAULT_OOV_TOKEN else '_'
+                      for semclass in semclass_preds]
 
         metadata = output["metadata"][0]
 

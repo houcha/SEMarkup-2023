@@ -1,4 +1,4 @@
-# from overrides import override
+from overrides import override
 from typing import Dict, List
 
 import torch
@@ -37,7 +37,7 @@ class FeedForwardClassifier(Model):
         self.criterion = nn.CrossEntropyLoss()
         self.accuracy = CategoricalAccuracy()
 
-    # @override(check_signature=False)
+    @override(check_signature=False)
     def forward(
         self,
         embeddings: Tensor,
@@ -61,7 +61,7 @@ class FeedForwardClassifier(Model):
     def update_metrics(self, logits: Tensor, labels: Tensor, mask: Tensor):
         self.accuracy(logits, labels, mask)
 
-    # @override
+    @override
     def get_metrics(self, reset: bool = False) -> Dict[str, float]:
         return {"Accuracy": self.accuracy.get_metric(reset)}
 

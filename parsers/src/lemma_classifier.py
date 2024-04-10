@@ -1,3 +1,4 @@
+from overrides import override
 from typing import Dict, List
 
 import re
@@ -52,7 +53,7 @@ class LemmaClassifier(FeedForwardClassifier):
             assert(topk is None)
         self.topk = topk
 
-    # @override
+    @override
     def forward(
         self,
         embeddings: Tensor,

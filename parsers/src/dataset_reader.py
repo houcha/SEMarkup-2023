@@ -70,7 +70,8 @@ class ComprenoUDDatasetReader(DatasetReader):
         fields['sentences'] = MetadataField(tokens)
 
         if lemmas is not None:
-            lemma_rules = [str(predict_lemma_rule(word, lemma)) for word, lemma in zip(words, lemmas)]
+            lemma_rules = [str(predict_lemma_rule(word if word is not None else '', lemma if lemma is not None else ''))
+                           for word, lemma in zip(words, lemmas)]
             fields['lemma_rule_labels'] = SequenceLabelField(lemma_rules, text_field, 'lemma_rule_labels')
 
         if upos_tags is not None and xpos_tags is not None and feats_tags is not None:
@@ -106,6 +107,7 @@ class ComprenoUDDatasetReader(DatasetReader):
             edges: List[Typle[int, int]] = []
             edges_labels: List[str] = []
             for index, token_deps in enumerate(deps):
+                assert 0 < len(token_deps), f"Deps must not be empty"
                 for head, relations in token_deps.items():
                     assert 0 <= head
                     # Hack: start indexing at 0 and replace ROOT with self-loop.

@@ -1,7 +1,7 @@
 # Configuration file for baseline model pretraining.
 # See https://guide.allennlp.org/training-and-prediction#2 for guidance.
 {
-    "train_data_path": "data/en_gum-ud.conllu",
+    "train_data_path": "data/en_pretrain.conllu",
     "validation_data_path": "data/validation.conllu",
     "dataset_reader": {
         "type": "compreno_ud_dataset_reader", # Use custom dataset reader.

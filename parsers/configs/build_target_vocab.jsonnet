@@ -1,6 +1,6 @@
 {
-    "train_data_path": "data/train_small_no_multiedges.conllu",
-    "validation_data_path": "data/validation_small_no_multiedges.conllu",
+    "train_data_path": "data/train.conllu",
+    "validation_data_path": "data/validation.conllu",
     "dataset_reader": {
         "type": "compreno_ud_dataset_reader", # Use custom dataset reader.
         "token_indexers": {

@@ -2,4 +2,5 @@
 
 mkdir ../data
 ./preprocessing.py ../data/dataset.conllu ../data/dataset_processed.conllu
-./train_val_split.py ../data/dataset_processed.conllu ../data/train.conllu ../data/validation.conllu 0.8
+./filter_invalid_conllu.py ../data/dataset_processed.conllu ../data/dataset_processed_filtered.conllu
+./train_val_split.py ../data/dataset_processed_filtered.conllu ../data/train.conllu ../data/validation.conllu 0.8

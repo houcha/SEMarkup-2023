@@ -20,12 +20,12 @@ rm en_ewt-ud-train.conllu en_ewt-ud-dev.conllu en_ewt-ud-test.conllu
 cat en_gum.conllu en_ewt.conllu > en_pretrain.conllu
 rm en_gum.conllu en_ewt.conllu
 
+# Remove extra tokens.
+./preprocessing.py en_pretrain.conllu en_pretrain.conllu
 # Remove all tags but syntactic ones, since we want to pretrain on syntax only.
-./tag_eraser.py en_pretrain.conllu en_pretrain_syntax_only.conllu --keep-syntax
-rm en_pretrain.conllu
-
+./tag_eraser.py en_pretrain.conllu en_pretrain.conllu --keep-syntax
 # Remove ill-formatted sentences.
-./filter_invalid_conllu.py en_pretrain_syntax_only.conllu en_pretrain_syntax_only_valid.conllu
-rm en_pretrain_syntax_only.conllu
+./filter_invalid_conllu.py en_pretrain.conllu en_pretrain.conllu
+
 # Move conllu to data directory.
-mv en_pretrain_syntax_only_valid.conllu ../data/
+mv en_pretrain.conllu ../data/

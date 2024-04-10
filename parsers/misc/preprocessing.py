@@ -20,9 +20,10 @@ def preprocess(token_lists: List[TokenList]) -> List[Sentence]:
         tokens = []
         for token in token_list:
             # Skip range tokens.
-            if '-' in token["id"]:
+            if '-' in token["id"] or token["deps"] == '_':
                 continue
             tokens.append(Token(**token))
+
         processed_sentences.append(Sentence(tokens, token_list.metadata))
     return processed_sentences
 

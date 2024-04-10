@@ -1,22 +1,13 @@
 #!/usr/bin/env python3
 
 import sys
-import json
 import argparse
-
-from tqdm import tqdm
-
 from typing import Dict, Iterable, List
+from tqdm import tqdm
 
 sys.path.append("../..") # import 'common' package
 from common.parse_conllu import parse_conllu_incr, write_conllu
 from common.sentence import Sentence
-
-
-def load_dict_from_json(json_file_path: str) -> Dict:
-    with open(json_file_path, "r") as file:
-        data = json.load(file)
-    return data
 
 
 def is_int(s: str):
@@ -29,7 +20,8 @@ def is_int(s: str):
     else:
         return True
 
-def validate_conllu(sentences: Iterable[Sentence]) -> List[Sentence]:
+
+def validate_conllu(sentences: Iterable[Sentence], verbose: bool = True) -> List[Sentence]:
     valid_sentences = []
     total_sentences_count = 0
 
@@ -48,12 +40,6 @@ def validate_conllu(sentences: Iterable[Sentence]) -> List[Sentence]:
                 if is_int(token.id):
                     sentence_natural_ids.add(int(token.id))
 
-                assert token.lemma is None
-                assert token.upos is None
-                assert token.xpos is None
-                assert token.semslot is None
-                assert token.semclass is None
-
                 # Null validation
                 if token.is_null():
                     assert token.form == "#NULL", f"Did you mean #NULL?: {token.form}"
@@ -62,13 +48,12 @@ def validate_conllu(sentences: Iterable[Sentence]) -> List[Sentence]:
                     assert len(token.deps) > 0, f"Null's deps = {token.deps} != _"
                     assert token.misc == 'ellipsis', f"Null's misc != ellipsis"
                     continue
-                
+
                 # Head
                 # Non-null tokens must have non-empty head.
                 assert is_int(token.head), f"Non-null tokens must have integer head. Encountered: {token.head} at {token.id}"
                 token.head = int(token.head)
-                if is_int(token.id):
-                    assert token.head != int(token.id), f"Self-loops are not allowed in heads. Head: {token.head}"
+                assert token.head != int(token.id), f"Self-loops are not allowed in heads. Head: {token.head}"
                 assert 0 <= token.head, f"Head must be non-negative. Encountered {token.head}"
                 if token.head == 0:
                     roots_count += 1
@@ -76,12 +61,13 @@ def validate_conllu(sentences: Iterable[Sentence]) -> List[Sentence]:
 
                 # Deps
                 token_heads = set()
+                assert 1 <= len(token.deps), f"{token.form} has empty deps: {token.deps}"
                 for head, rels in token.deps.items():
                     assert len(rels) == 1, \
                         f"Multiedges are not allowed: {rels}"
                     assert is_int(head) or head is None, \
                         f"Deps head must be either int or null (x.1). Encountered: {head}"
-                    assert head != token.id, \
+                    assert str(head) != str(token.id), \
                         f"Self-loops are not allowed in deps. Head: {head}"
                     assert 0 <= float(head), \
                         f"Deps head must be non-negative. Encountered: {head}"
@@ -100,12 +86,13 @@ def validate_conllu(sentences: Iterable[Sentence]) -> List[Sentence]:
             valid_sentences.append(sentence)
 
         except AssertionError as e:
-            print(f"Error: {e}")
-            # Uncomment if necessary
-            # print(f"Sentence:\n{sentence.serialize()}")
+            if verbose:
+                print(f"Error: {e}")
+                print(f"Sentence:\n{sentence.serialize()}")
 
     valid_sentences_fraction = len(valid_sentences) / total_sentences_count
     print(f"Number of valid sentences: {len(valid_sentences)}, which is {valid_sentences_fraction:2f} of total dataset size.")
+
     return valid_sentences
 
 
@@ -113,8 +100,9 @@ def main(input_file_path: str, output_file_path: str):
     print(f"Load sentences...")
     with open(input_file_path, "r", encoding='utf8') as file:
         sentences = parse_conllu_incr(file)
-        valid_sentences = validate_conllu(sentences)
+        valid_sentences = validate_conllu(sentences, verbose=True)
         write_conllu(output_file_path, valid_sentences)
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='Conllu format validity check.')

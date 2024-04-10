@@ -72,7 +72,7 @@ def build_cover_sentences(sentences: List[Sentence], tagsets_names: List[str]) -
     return cover_sentences_indexes
 
 
-def train_val_split( sentences: List[Sentence], train_fraction: float, tagsets_names: List[str]) -> None:
+def train_val_split(sentences: List[Sentence], train_fraction: float, tagsets_names: List[str]) -> None:
     assert 0.0 < train_fraction < 1.0, "train_fraction must be in (0, 1) range."
     train_size = int(train_fraction * len(sentences))
 
@@ -150,9 +150,6 @@ if __name__ == "__main__":
     # Modify tags.
     for token_list in token_lists:
         for token in token_list:
-            #print(token_list.metadata['sent_id'], token['id'], token['form'])
-            #token["lemma_rule"] = predict_lemma_rule(token["form"], token["lemma"]) if token["form"] else ""
-            #token["upos&feats"] = token["upos"] + "&" + str(token["feats"])
             token.lemma_rule = predict_lemma_rule(token.form, token.lemma) if token.form else ""
             token.upos_feats = token.upos + "&" + str(token.feats)
 

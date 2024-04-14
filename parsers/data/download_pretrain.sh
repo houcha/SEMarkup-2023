@@ -26,6 +26,3 @@ rm en_gum.conllu en_ewt.conllu
 ./tag_eraser.py en_pretrain.conllu en_pretrain.conllu --keep-syntax
 # Remove ill-formatted sentences.
 ./filter_invalid_conllu.py en_pretrain.conllu en_pretrain.conllu
-
-# Move conllu to data directory.
-mv en_pretrain.conllu ../data/

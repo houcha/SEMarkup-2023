@@ -34,7 +34,7 @@ def validate_conllu(sentences: Iterable[Sentence], verbose: bool = True) -> List
             sentence_heads = set()
             sentence_deps_heads = set()
             roots_count = 0
-            
+
             for token in sentence:
                 sentence_all_ids.add(int(token.id))
                 if is_int(token.id):

@@ -1,6 +1,7 @@
-# Configuration file for baseline model finetuning (it must be pretrained using baseline_pretrain.jsonnet config first!).
+# Configuration file for baseline model pretraining.
+# See https://guide.allennlp.org/training-and-prediction#2 for guidance.
 {
-    "train_data_path": "data/train.conllu",
+    "train_data_path": "data/en_pretrain.conllu",
     "validation_data_path": "data/validation.conllu",
     "dataset_reader": {
         "type": "compreno_ud_dataset_reader", # Use custom dataset reader.
@@ -20,13 +21,61 @@
         "batch_size": 16,
         "shuffle": false
     },
+    # Extend target vocabulary with tags encountered in pretraining dataset.
     "vocabulary": {
-        "type": "from_files",
-        "directory": "serialization/pretrained/vocabulary",
+	"type": "extend",
+	"directory": "serialization/baseline/tiny/target_vocab.tar.gz",
+        "tokens_to_add": { # Add OOV and None-replacement tokens.
+            "lemma_rule_labels": ["@@UNKNOWN@@"],
+        },
     },
     "model": {
-	"type": "from_archive",
-	"archive_file": "serialization/pretrained/model.tar.gz"
+        "type": "morpho_syntax_semantic_parser", # Use custom model.
+	# FIXME: take indexer from dataset_reader
+        "indexer": {
+	    "type": "pretrained_transformer_mismatched",
+	    "model_name": "cointegrated/rubert-tiny"
+        },
+        "embedder": {
+            "type": "pretrained_transformer_mismatched",
+            "model_name": "cointegrated/rubert-tiny",
+            "train_parameters": true
+        },
+        "lemma_rule_classifier": {
+            "hid_dim": 512,
+            "activation": "relu",
+            "dropout": 0.1,
+        },
+        "pos_feats_classifier": {
+            "hid_dim": 256,
+            "activation": "relu",
+            "dropout": 0.1
+        },
+        "depencency_classifier": {
+            "hid_dim": 128,
+            "activation": "relu",
+            "dropout": 0.1
+        },
+        "misc_classifier": {
+            "hid_dim": 128,
+            "activation": "relu",
+            "dropout": 0.1
+        },
+        "semslot_classifier": {
+            "hid_dim": 1024,
+            "activation": "relu",
+            "dropout": 0.1
+        },
+        "semclass_classifier": {
+            "hid_dim": 1024,
+            "activation": "relu",
+            "dropout": 0.1
+        },
+        "null_classifier": {
+            "hid_dim": 512,
+            "activation": "relu",
+            "dropout": 0.1
+        }
     },
     "trainer": {
         "type": "gradient_descent",

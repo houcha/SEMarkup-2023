@@ -6,7 +6,6 @@
         "token_indexers": {
             "tokens": {
                 "type": "pretrained_transformer_mismatched",
-		# WARNING: don't forget to change model.embedder and model.indexer as well.
                 "model_name": "cointegrated/rubert-tiny" # Use rubert-tiny.
             }
         },
